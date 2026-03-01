@@ -1,0 +1,47 @@
+.fab {
+    position: absolute;
+    bottom: 2rem;
+    right: 50%;
+    transform: translateX(50%);
+    z-index: 1000;
+
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+
+    color: var(--primary-color);
+    font-weight: 600;
+    font-size: 1rem;
+
+    /* Use glassmorphism variable from index.css implicitly via .glass class */
+}
+
+.fab:hover,
+.fab:active {
+    background: var(--surface-color);
+    transform: translateX(50%) scale(1.05);
+}
+
+.fab.active {
+    background: var(--danger-color);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
+}
