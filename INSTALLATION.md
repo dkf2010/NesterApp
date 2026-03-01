@@ -1,45 +1,49 @@
-# Installation Guide
+# Installationsanleitung
 
-## Tech Stack
+## Tech-Stack
 - **Frontend**: React (Vite), React-Leaflet
 - **Backend**: PHP 8+, MySQL
 
-## Prerequisites
+## Voraussetzungen
 - Node.js (v18+)
-- Local server environment for PHP and MySQL (e.g., XAMPP, MAMP, DDEV, Docker)
+- Lokale Serverumgebung für PHP und MySQL (z.B. XAMPP, MAMP, DDEV, Docker)
 
-## Step-by-Step Setup
+## Schritt-für-Schritt Einrichtung
 
-1. **Clone the repository**
+1. **Repository klonen**
    ```bash
    git clone https://github.com/your-username/NesterApp.git
    cd NesterApp
    ```
 
-2. **Backend Setup**
-   - Create a new MySQL database (e.g., `nester_db`).
-   - Import the database schema from `backend/schema.sql` into your new database.
-   - Run the application on your local PHP server (e.g. MAMP/XAMPP) so `backend/api/` is accessible via `http://localhost/...`
-   - Copy `.env.example` to `.env` in the root folder and update your database credentials.
+2. **Backend Einrichtung**
+   - Erstelle eine neue MySQL-Datenbank (z.B. `nester_db`).
+   - Importiere das Datenbankschema aus `backend/schema.sql` in deine neue Datenbank.
+   - Führe die Anwendung auf deinem lokalen PHP-Server (z.B. MAMP/XAMPP) aus, sodass `backend/api/` über `http://localhost/...` erreichbar ist.
+   - Kopiere `.env.example` nach `.env` im Stammverzeichnis und aktualisiere deine Datenbank-Zugangsdaten.
+   - Setze die korrekten Berechtigungen für die `.env` Datei:
+     ```bash
+     chmod 600 .env
+     ```
 
-3. **Frontend Setup**
-   - Install dependencies:
+3. **Frontend Einrichtung**
+   - Installiere die Abhängigkeiten:
      ```bash
      npm install
      ```
-   - Make sure your `.env` contains the correct API URL:
+   - Stelle sicher, dass deine `.env` die korrekte API-URL enthält:
      ```env
      VITE_API_BASE_URL=http://localhost/NesterApp/backend/api
      ```
-   - Start the development server:
+   - Starte den Entwicklungsserver:
      ```bash
      npm run dev
      ```
 
-## Production Build
+## Produktions-Build
 
-To build the React app for production:
+Um die React-App für die Produktion zu erstellen:
 ```bash
 npm run build
 ```
-This generates a `dist/` directory. Upload the contents of `dist/` and `backend/` to your production web server.
+Dies generiert ein `dist/`-Verzeichnis. Lade den Inhalt von `dist/` und `backend/` auf deinen Produktions-Webserver hoch.

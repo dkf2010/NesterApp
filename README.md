@@ -1,21 +1,21 @@
 # NesterApp
 
-NesterApp is an open-source web application designed to track and manage pigeon nests in cities. It features an interactive map for locating nests, logging observations, and uploading photos, aiming to support the humane management of urban pigeon populations.
+NesterApp ist eine Open-Source-Webanwendung zur Erfassung und Verwaltung von Taubennestern in Städten. Sie bietet eine interaktive Karte zur Lokalisierung von Nestern, zur Protokollierung von Beobachtungen und zum Hochladen von Fotos mit dem Ziel, das tierschutzgerechte Management städtischer Taubenpopulationen zu unterstützen.
 
-## Features
-- **Interactive Map**: View all registered nests using Leaflet.
-- **Reporting**: Log activities, status updates, and photos for individual nests.
-- **Location Tracking**: Automatic naming based on OpenStreetMap amenities or street addresses.
-- **PWA Ready**: Can be installed on mobile devices for on-the-go reporting.
+## Funktionen
+- **Interaktive Karte**: Ansicht aller registrierten Nester mithilfe von Leaflet (OpenStreetMaps).
+- **Berichterstattung**: Protokollierung von Aktivitäten, Statusaktualisierungen und Fotos für einzelne Nester.
+- **Standortverfolgung**: Automatische Benennung basierend auf OpenStreetMap-Einrichtungen oder Straßenadressen.
+- **PWA-fähig**: Kann auf Mobilgeräten für die Berichterstattung von unterwegs installiert werden.
 
-## Getting Started
+## Erste Schritte
 
-See [INSTALLATION.md](INSTALLATION.md) for instructions on how to set up the local development environment and deploy to production.
+Siehe [INSTALLATION.md](INSTALLATION.md) für Anweisungen zur Einrichtung der lokalen Entwicklungsumgebung und zur Bereitstellung in der Produktion.
 
-## Contributing
+## Mitwirken
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to help out.
+Wir freuen uns über Beiträge! Bitte lies [CONTRIBUTING.md](CONTRIBUTING.md) für Richtlinien, wie du helfen kannst.
 
-## License
+## Lizenz
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+Dieses Projekt ist unter der GNU General Public License v3.0 lizenziert - siehe die Datei [LICENSE](LICENSE) für Details.

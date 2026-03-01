@@ -1,25 +1,25 @@
-# Contributing to NesterApp
+# Mitwirken bei NesterApp
 
-First, thank you for considering contributing to NesterApp! It's people like you that make this tool great.
+Zunächst einmal vielen Dank, dass du in Erwägung ziehst, zu NesterApp beizutragen! Es sind Leute wie du, die dieses Tool großartig machen.
 
-## How to Contribute
+## Wie man beitragen kann
 
-### 1. Reporting Bugs
-- Make sure the bug isn't already reported in the Issues.
-- Provide clear steps to reproduce the issue.
-- Include details about your browser, device, and the specific action that failed.
+### 1. Fehler melden (Bugs)
+- Stelle sicher, dass der Fehler nicht bereits in den Issues gemeldet wurde.
+- Stelle klare Schritte zur Reproduktion des Problems bereit.
+- Füge Details zu deinem Browser, Gerät und der spezifischen fehlgeschlagenen Aktion hinzu.
 
-### 2. Suggesting Enhancements
-- Open an Issue describing your feature idea.
-- Explain *why* this enhancement would be useful to most users.
-- If possible, provide mockups or examples.
+### 2. Verbesserungen vorschlagen
+- Eröffne ein Issue, das deine Feature-Idee beschreibt.
+- Erkläre, *warum* diese Verbesserung für die meisten Benutzer nützlich wäre.
+- Stelle, wenn möglich, Mockups oder Beispiele zur Verfügung.
 
-### 3. Submitting Pull Requests
-- Fork the repository and create your branch from `main`.
-- Install dependencies and ensure your changes work locally (`npm run dev`).
-- Make sure to update the documentation or `.env.example` if your PR changes configurations.
-- Use clear and descriptive commit messages.
+### 3. Pull Requests einreichen
+- Forke das Repository und erstelle deinen Branch ausgehend von `main`.
+- Installiere die Abhängigkeiten und stelle sicher, dass deine Änderungen lokal funktionieren (`npm run dev`).
+- Stelle sicher, dass du die Dokumentation oder `.env.example` aktualisierst, falls dein PR Konfigurationen ändert.
+- Verwende klare und anschauliche Commit-Nachrichten.
 
-## Code Style
-- **Frontend**: We use ESLint. Please ensure `npm run lint` passes without errors.
-- **Backend**: Please follow standard PSR-12 coding style for PHP. Keep logic clean and document functions where complexity exists.
+## Code-Stil
+- **Frontend**: Wir verwenden ESLint. Bitte stelle sicher, dass `npm run lint` ohne Fehler durchläuft.
+- **Backend**: Bitte befolge den Standard PSR-12 Programmierstil für PHP. Halte die Logik sauber und dokumentiere Funktionen, in denen Komplexität besteht.
