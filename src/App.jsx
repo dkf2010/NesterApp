@@ -42,30 +42,49 @@ function MainApp() {
     refreshNests();
   }, [isAuthenticated, token]);
 
-  // Calculate eggs swapped today
-  const today = new Date().setHours(0, 0, 0, 0);
-  const swappedEggsToday = nests.reduce((total, nest) => {
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (showStats) setShowStats(false);
+        if (selectedNest) setSelectedNest(null);
+        if (showUserManagement) setShowUserManagement(false);
+        if (showChangePassword) setShowChangePassword(false);
+        if (showForgot) setShowForgot(false);
+        if (isAddingMode) setIsAddingMode(false);
+        if (movingNest) setMovingNest(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showStats, selectedNest, showUserManagement, showChangePassword, showForgot, isAddingMode, movingNest]);
+
+  // Calculate eggs swapped today for visible nests
+  const todayStr = new Date().toLocaleDateString('de-DE');
+  const swappedEggsToday = visibleNests.reduce((total, nest) => {
     if (!nest.logs) return total;
     const swapsToday = nest.logs.filter(log => {
-      const logDate = new Date(log.timestamp).setHours(0, 0, 0, 0);
-      return logDate === today &&
-        log.action.startsWith('Taubeneier gegen Kunststoffeier getauscht') &&
-        log.user_name === user?.username;
+      const logDateStr = new Date(log.timestamp).toLocaleDateString('de-DE');
+      return logDateStr === todayStr &&
+        log.action.startsWith('Taubeneier gegen Kunststoffeier getauscht');
     });
 
-    // Parse the amount from the action string, e.g. "Taubeneier gegen Kunststoff getauscht (1 Ei)"
-    // Default to 2 for older logs without explicit counts
-    const eggsFromSwaps = swapsToday.reduce((sum, log) => {
-      const match = log.action.match(/\((\d+) Ei(?:er)?\)/);
-      return sum + (match ? parseInt(match[1], 10) : 2);
-    }, 0);
+    if (swapsToday.length === 0) return total;
 
-    return total + eggsFromSwaps;
+    // Use only the latest swap for the day to prevent additive bug when user corrects an entry (e.g. from 1 to 2 eggs)
+    swapsToday.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const latestSwap = swapsToday[0];
+
+    const match = latestSwap.action.match(/\((\d+) Ei(?:er)?\)/);
+    const eggsFromSwap = match ? parseInt(match[1], 10) : 2;
+
+    return total + eggsFromSwap;
   }, 0);
 
   // Calculate visible nest status counts
   const countVisibleNestsByStatus = () => {
-    const counts = { neu: 0, getauscht: 0, verlassen: 0, entfernt: 0, bebruetet: 0 };
+    const counts = { neu: 0, getauscht: 0, verlassen: 0, entfernt: 0, bebruetet: 0, zu_weit: 0, kueken: 0 };
     visibleNests.forEach(nest => {
       if (!nest.logs || nest.logs.length === 0) {
         counts.neu++;
@@ -75,15 +94,33 @@ function MainApp() {
       const statusLog = nest.logs.find(log =>
         !log.action.startsWith('Name geändert zu') &&
         !log.action.startsWith('Nest angelegt') &&
-        !log.action.startsWith('Foto hinzugefügt')
+        !log.action.startsWith('Foto hinzugefügt') &&
+        !log.action.startsWith('Foto gelöscht')
       );
 
       const action = statusLog ? statusLog.action : 'Neues Nest';
 
-      if (action.startsWith('Taubeneier gegen Kunststoffeier getauscht')) counts.getauscht++;
+      if (action.startsWith('Taubeneier gegen Kunststoffeier getauscht')) {
+        const match = action.match(/\((\d+) Ei(?:er)?\)/);
+        counts.getauscht += match ? parseInt(match[1], 10) : 2;
+      }
+      else if (action.startsWith('Eier zu weit')) {
+        const match = action.match(/\((\d+) Ei(?:er)?\)/);
+        counts.zu_weit += match ? parseInt(match[1], 10) : 2;
+      }
       else if (action === 'Nest verlassen') counts.verlassen++;
-      else if (action.startsWith('Kunststoffeier entfernt')) counts.entfernt++;
-      else if (action.startsWith('Kunststoffeier werden bebrütet')) counts.bebruetet++;
+      else if (action.startsWith('Kunststoffeier entfernt')) {
+        const match = action.match(/\((\d+) Ei(?:er)?\)/);
+        counts.entfernt += match ? parseInt(match[1], 10) : 2;
+      }
+      else if (action.startsWith('Kunststoffeier werden bebrütet')) {
+        const match = action.match(/\((\d+) Ei(?:er)?\)/);
+        counts.bebruetet += match ? parseInt(match[1], 10) : 2;
+      }
+      else if (action.startsWith('Küken')) {
+        const match = action.match(/\((\d+) Küken\)/);
+        counts.kueken += match ? parseInt(match[1], 10) : 2;
+      }
       else counts.neu++;
     });
     return counts;
@@ -173,6 +210,13 @@ function MainApp() {
     setSelectedNest(updatedNest);
   };
 
+  const handleLogDeleted = async (nestId) => {
+    await refreshNests();
+    const updatedData = await loadNests(token);
+    const updatedNest = updatedData.find(n => n.id === nestId);
+    setSelectedNest(updatedNest);
+  };
+
   const handleDeleteRequest = async (nestId) => {
     if (window.confirm("Soll das Nest wirklich gelöscht werden?")) {
       await deleteNest(nestId, token);
@@ -254,7 +298,7 @@ function MainApp() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
             <Egg size={20} />
-            <span>{swappedEggsToday} Eier von mir heute getauscht</span>
+            <span>{swappedEggsToday} Eier heute im sichtbaren Bereich getauscht</span>
           </div>
 
           <div style={{ fontSize: '0.85rem', color: 'var(--text-color)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -293,6 +337,22 @@ function MainApp() {
                 <span>Kunststoff-Eier entfernt</span>
               </div>
               <span style={{ fontWeight: 'bold' }}>{statusCounts.entfernt}</span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#f97316', flexShrink: 0 }}></div>
+                <span>Eier zu weit</span>
+              </div>
+              <span style={{ fontWeight: 'bold' }}>{statusCounts.zu_weit}</span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#14b8a6', flexShrink: 0 }}></div>
+                <span>Küken</span>
+              </div>
+              <span style={{ fontWeight: 'bold' }}>{statusCounts.kueken}</span>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
@@ -336,6 +396,7 @@ function MainApp() {
           onDeleteRequest={handleDeleteRequest}
           onMoveRequest={handleMoveRequest}
           onPhotoUploaded={handlePhotoUploaded}
+          onLogDeleted={handleLogDeleted}
         />
       )}
     </div>

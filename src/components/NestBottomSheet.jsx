@@ -1,11 +1,11 @@
-import { X, Egg, EggOff, CheckCircle2, Move, Trash2, Pencil, Camera, Image, Trash } from 'lucide-react';
+import { X, Egg, EggOff, CheckCircle2, Move, Trash2, Pencil, Camera, Image, Trash, Bird } from 'lucide-react';
 import { useState, useRef } from 'react';
 import './NestBottomSheet.css';
-import { uploadNestPhoto, deleteNestPhoto, API_BASE_URL } from '../services/nestService';
+import { uploadNestPhoto, deleteNestPhoto, deleteLogFromNest, API_BASE_URL } from '../services/nestService';
 import { useAuth } from '../contexts/AuthContext';
 
-export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange, onDeleteRequest, onMoveRequest, onPhotoUploaded }) {
-    const { token } = useAuth();
+export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange, onDeleteRequest, onMoveRequest, onPhotoUploaded, onLogDeleted }) {
+    const { token, user } = useAuth();
     const [isUploading, setIsUploading] = useState(false);
     const [isDeletingPhoto, setIsDeletingPhoto] = useState(false);
     const [fullScreenImage, setFullScreenImage] = useState(null);
@@ -64,6 +64,22 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
         }
     };
 
+    const handleLogDelete = async (logId) => {
+        if (!window.confirm("Möchtest du diesen Log-Eintrag wirklich unwiderruflich löschen?")) return;
+
+        const success = await deleteLogFromNest(logId, token);
+        if (success) {
+            if (onLogDeleted) {
+                onLogDeleted(nest.id);
+            } else {
+                // If onLogDeleted callback is missing, trigger a generic action to refresh
+                onAction('Log-Eintrag gelöscht');
+            }
+        } else {
+            alert('Fehler beim Löschen des Log-Eintrags.');
+        }
+    };
+
     const photoUrl = nest.photo_filename
         ? `${API_BASE_URL.replace('/api', '')}/uploads/nests/${nest.photo_filename}`
         : null;
@@ -98,6 +114,21 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
             hasSplit: true
         },
         {
+            id: "eggs_too_far",
+            label: "Eier zu weit",
+            icon: <EggOff size={20} />,
+            color: "#f97316", // Orange
+            hasSplit: true
+        },
+        {
+            id: "chicks",
+            label: "Küken",
+            icon: <Bird size={20} />,
+            color: "#14b8a6", // Teal
+            hasSplit: true,
+            splitLabels: ['1 Küken', '2 Küken']
+        },
+        {
             id: "abandoned",
             label: "Nest verlassen",
             icon: <X size={20} />,
@@ -121,6 +152,8 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
         if (statusLog.action.startsWith('Taubeneier gegen Kunststoffeier getauscht')) return 'swap_eggs';
         if (statusLog.action.startsWith('Kunststoffeier werden bebrütet')) return 'incubate_plastic';
         if (statusLog.action.startsWith('Kunststoffeier entfernt')) return 'remove_plastic';
+        if (statusLog.action.startsWith('Eier zu weit')) return 'eggs_too_far';
+        if (statusLog.action.startsWith('Küken')) return 'chicks';
         if (statusLog.action.startsWith('Nest verlassen')) return 'abandoned';
 
         return null;
@@ -222,7 +255,8 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
                     <div className="action-grid">
                         {actionOptions.map(action => {
                             const isActive = action.id === activeActionId;
-                            const headerClickValue = action.hasSplit ? `${action.label} (2 Eier)` : action.label;
+                            const defaultLabel2 = action.splitLabels ? action.splitLabels[1] : '2 Eier';
+                            const headerClickValue = action.hasSplit ? `${action.label} (${defaultLabel2})` : action.label;
 
                             return (
                                 <div key={action.id} className={`action-split-card ${isActive ? 'is-active' : ''}`} style={{ '--action-color': action.color }}>
@@ -240,16 +274,16 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
                                         <div className="action-split-buttons">
                                             <button
                                                 className="action-half-btn"
-                                                onClick={() => onAction(`${action.label} (1 Ei)`)}
+                                                onClick={() => onAction(`${action.label} (${action.splitLabels ? action.splitLabels[0] : '1 Ei'})`)}
                                             >
-                                                1 Ei
+                                                {action.splitLabels ? action.splitLabels[0] : '1 Ei'}
                                             </button>
                                             <div className="action-split-divider"></div>
                                             <button
                                                 className="action-half-btn"
-                                                onClick={() => onAction(`${action.label} (2 Eier)`)}
+                                                onClick={() => onAction(`${action.label} (${defaultLabel2})`)}
                                             >
-                                                2 Eier
+                                                {defaultLabel2}
                                             </button>
                                         </div>
                                     )}
@@ -272,6 +306,23 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
                                             </p>
                                             <span className="log-time">{formatDate(log.timestamp)}</span>
                                         </div>
+                                        {user?.is_admin && (
+                                            <button
+                                                className="action-icon"
+                                                onClick={() => handleLogDelete(log.id)}
+                                                style={{
+                                                    background: 'none',
+                                                    border: 'none',
+                                                    padding: '0.4rem',
+                                                    color: 'var(--danger-color)',
+                                                    cursor: 'pointer',
+                                                    marginLeft: 'auto'
+                                                }}
+                                                aria-label="Log-Eintrag löschen"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -287,6 +338,10 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
                             <Trash2 size={18} />
                             Nest löschen
                         </button>
+                    </div>
+
+                    <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        ID: {nest.id}
                     </div>
                 </div>
             </div>

@@ -59,6 +59,8 @@ const getMarkerColor = (nest) => {
     if (latestAction.startsWith('Taubeneier gegen Kunststoffeier getauscht')) return '#22c55e'; // Green
     if (latestAction.startsWith('Kunststoffeier werden bebrütet')) return '#eab308'; // Yellow
     if (latestAction.startsWith('Kunststoffeier entfernt')) return '#ef4444'; // Red
+    if (latestAction.startsWith('Küken')) return '#14b8a6'; // Teal
+    if (latestAction.startsWith('Eier zu weit')) return '#f97316'; // Orange
     if (latestAction.startsWith('Nest verlassen')) return '#a855f7'; // Purple
 
     return '#3b82f6'; // Fallback to Blue
