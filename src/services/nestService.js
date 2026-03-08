@@ -68,6 +68,24 @@ export const addLogToNest = async (nestId, actionText, token) => {
     }
 };
 
+export const deleteLogFromNest = async (logId, token) => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/delete_log.php`, {
+            method: 'POST',
+            headers: getHeaders(token),
+            body: JSON.stringify({ id: logId })
+        });
+        if (!response.ok) {
+            const errorData = await response.text();
+            throw new Error(`Failed to delete log: ${response.status} - ${errorData}`);
+        }
+        return true;
+    } catch (e) {
+        console.error("Could not delete log via API:", e.message);
+        return false;
+    }
+};
+
 export const uploadNestPhoto = async (nestId, photoFile, token) => {
     const formData = new FormData();
     formData.append('id', nestId);
