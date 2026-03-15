@@ -3,6 +3,7 @@
 
 require_once 'db.php';
 require_once 'auth/auth_util.php';
+require_once 'app_logger.php';
 
 // Only allow POST requests (OPTIONS is handled by db.php)
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -38,6 +39,9 @@ try {
 
     // 5. Check if any row was affected (deleted)
     if ($stmt->rowCount() > 0) {
+        app_log($pdo, 'info', 'api/delete_log', "Nest-Log-Eintrag gelöscht", [
+            'log_id' => $logId
+        ], $user['id']);
         http_response_code(200);
         echo json_encode(['success' => true, 'message' => 'Log deleted successfully']);
     } else {
@@ -45,6 +49,10 @@ try {
         echo json_encode(['error' => 'Log not found']);
     }
 } catch (PDOException $e) {
+    app_log($pdo, 'error', 'api/delete_log', 'Fehler beim Löschen eines Log-Eintrags', [
+        'exception' => $e->getMessage(),
+        'log_id' => $logId
+    ], $user['id']);
     http_response_code(500);
     echo json_encode(['error' => 'Database error', 'details' => $e->getMessage()]);
 }

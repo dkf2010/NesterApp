@@ -1,6 +1,7 @@
 <?php
 // backend/api/auth/login.php
 require_once dirname(__DIR__) . '/db.php';
+require_once dirname(__DIR__) . '/app_logger.php';
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -26,6 +27,8 @@ try {
         $insert = $pdo->prepare("INSERT INTO user_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)");
         $insert->execute([$tokenId, $user['id'], $token, $expiresAt]);
 
+        app_log($pdo, 'info', 'auth/login', "Login erfolgreich: {$user['username']}", null, $user['id']);
+
         echo json_encode([
             'success' => true,
             'token' => $token,
@@ -36,10 +39,15 @@ try {
             ]
         ]);
     } else {
+        $attemptedEmail = htmlspecialchars($data['email'] ?? '');
+        app_log($pdo, 'warning', 'auth/login', "Fehlgeschlagener Login-Versuch für: {$attemptedEmail}", [
+            'email' => $data['email'] ?? ''
+        ]);
         http_response_code(401);
         echo json_encode(['error' => 'Invalid credentials']);
     }
 } catch (Exception $e) {
+    app_log($pdo, 'error', 'auth/login', 'Datenbankfehler beim Login', ['exception' => $e->getMessage()]);
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);
 }

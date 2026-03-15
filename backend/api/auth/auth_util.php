@@ -1,6 +1,7 @@
 <?php
 // backend/api/auth/auth_util.php
 require_once dirname(__DIR__) . '/db.php';
+require_once dirname(__DIR__) . '/app_logger.php';
 
 // Helper function to check if the provided token in the Authorization header is valid
 function require_auth($pdo)
@@ -27,6 +28,9 @@ function require_auth($pdo)
     $tokenRow = $stmt->fetch();
 
     if (!$tokenRow) {
+        app_log($pdo, 'warning', 'auth/token', 'Unbekannter oder ungültiger Token verwendet', [
+            'endpoint' => $_SERVER['REQUEST_URI'] ?? 'unknown'
+        ]);
         http_response_code(401);
         echo json_encode(['error' => 'Invalid or expired token']);
         exit;
@@ -40,6 +44,10 @@ function require_auth($pdo)
         $delStmt = $pdo->prepare("DELETE FROM user_tokens WHERE token = ?");
         $delStmt->execute([$token]);
 
+        app_log($pdo, 'info', 'auth/token', 'Abgelaufene Session gelöscht', [
+            'user_id' => $tokenRow['user_id']
+        ], $tokenRow['user_id']);
+
         http_response_code(401);
         echo json_encode(['error' => 'Session expired. Please log in again.']);
         exit;
@@ -51,6 +59,9 @@ function require_auth($pdo)
     $user = $userStmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$user) {
+        app_log($pdo, 'warning', 'auth/token', 'Token gehört zu nicht mehr existierendem User', [
+            'user_id' => $tokenRow['user_id']
+        ]);
         http_response_code(401);
         echo json_encode(['error' => 'User no longer exists']);
         exit;

@@ -1,4 +1,4 @@
-import { createContext, useState, useEffect, useContext } from 'react';
+import { createContext, useState, useEffect, useContext, useCallback } from 'react';
 
 const AuthContext = createContext(null);
 
@@ -28,13 +28,32 @@ export const AuthProvider = ({ children }) => {
         if (newUserProfile) setUser(newUserProfile);
     };
 
-    const logout = () => {
+    const logout = useCallback(() => {
         setToken(null);
         setUser(null);
-    };
+    }, []);
+
+    // Wrapper around fetch that automatically logs the user out on 401 responses.
+    // Use this for all authenticated API calls instead of raw fetch().
+    const fetchWithAuth = useCallback(async (url, options = {}) => {
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                ...(options.headers || {}),
+                Authorization: `Bearer ${token}`,
+            },
+        });
+
+        if (response.status === 401) {
+            logout();
+            return response; // caller can check response.ok if needed
+        }
+
+        return response;
+    }, [token, logout]);
 
     return (
-        <AuthContext.Provider value={{ token, isAuthenticated, user, login, logout }}>
+        <AuthContext.Provider value={{ token, isAuthenticated, user, login, logout, fetchWithAuth }}>
             {children}
         </AuthContext.Provider>
     );

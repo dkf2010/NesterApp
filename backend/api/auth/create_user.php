@@ -2,6 +2,7 @@
 // backend/api/auth/create_user.php
 require_once dirname(__DIR__) . '/db.php';
 require_once 'auth_util.php';
+require_once dirname(__DIR__) . '/app_logger.php';
 
 // Only logged in admins can create new users
 $currentUser = require_auth($pdo);
@@ -53,12 +54,22 @@ try {
 
     mail($email, $subject, $message, $headers);
 
+    app_log($pdo, 'info', 'auth/create_user', "Neuer Benutzer angelegt: {$username}", [
+        'new_user_email' => $email
+    ], $currentUser['id']);
+
     echo json_encode(['success' => true]);
 } catch (PDOException $e) {
     if ($e->getCode() == 23000) {
+        app_log($pdo, 'warning', 'auth/create_user', "Benutzer konnte nicht angelegt werden (Duplikat): {$username}", [
+            'email' => $data['email'] ?? ''
+        ], $currentUser['id']);
         http_response_code(400);
         echo json_encode(['error' => 'Username or Email already exists.']);
     } else {
+        app_log($pdo, 'error', 'auth/create_user', 'DB-Fehler beim Anlegen eines Benutzers', [
+            'exception' => $e->getMessage()
+        ], $currentUser['id']);
         http_response_code(500);
         echo json_encode(['error' => $e->getMessage()]);
     }

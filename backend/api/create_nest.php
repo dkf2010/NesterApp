@@ -2,6 +2,7 @@
 // backend/api/create_nest.php
 require_once 'db.php';
 require_once 'auth/auth_util.php';
+require_once 'app_logger.php';
 
 $currentUser = require_auth($pdo);
 
@@ -40,8 +41,17 @@ try {
         $createdAt
     ]);
 
+    app_log($pdo, 'info', 'api/create_nest', "Nest angelegt: " . ($name ?? 'ohne Name'), [
+        'nest_id' => $data['id'],
+        'lat' => $data['lat'],
+        'lng' => $data['lng']
+    ], $currentUser['id']);
+
     echo json_encode(['success' => true]);
 } catch (Exception $e) {
+    app_log($pdo, 'error', 'api/create_nest', 'Fehler beim Anlegen eines Nests', [
+        'exception' => $e->getMessage()
+    ], $currentUser['id']);
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);
 }

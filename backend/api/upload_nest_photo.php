@@ -2,6 +2,7 @@
 // backend/api/upload_nest_photo.php
 require_once 'db.php';
 require_once 'auth/auth_util.php';
+require_once 'app_logger.php';
 
 $currentUser = require_auth($pdo);
 
@@ -215,12 +216,22 @@ if ($success) {
             $createdAt
         ]);
 
+        app_log($pdo, 'info', 'api/upload_nest_photo', 'Foto hochgeladen', [
+            'nest_id' => $nestId,
+            'filename' => $filename,
+            'dimensions' => "{$newWidth}x{$newHeight}"
+        ], $currentUser['id']);
+
         echo json_encode([
             'success' => true,
             'photo_filename' => $filename,
             'message' => 'Photo uploaded successfully'
         ]);
     } catch (Exception $e) {
+        app_log($pdo, 'error', 'api/upload_nest_photo', 'Datenbankfehler nach Foto-Upload', [
+            'exception' => $e->getMessage(),
+            'nest_id' => $nestId
+        ], $currentUser['id']);
         http_response_code(500);
         echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
     }

@@ -1,6 +1,7 @@
 <?php
 // backend/api/auth/reset_password.php
 require_once dirname(__DIR__) . '/db.php';
+require_once dirname(__DIR__) . '/app_logger.php';
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -43,6 +44,8 @@ try {
     // Delete used reset token
     $delStmt = $pdo->prepare("DELETE FROM password_resets WHERE email = ?");
     $delStmt->execute([$resetRow['email']]);
+
+    app_log($pdo, 'info', 'auth/reset_password', "Passwort erfolgreich zurückgesetzt für: {$resetRow['email']}");
 
     echo json_encode(['success' => true]);
 } catch (Exception $e) {

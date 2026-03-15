@@ -2,8 +2,9 @@
 // backend/api/delete_nest_photo.php
 require_once 'db.php';
 require_once 'auth/auth_util.php';
+require_once 'app_logger.php';
 
-$user_id = require_auth($pdo);
+$currentUser = require_auth($pdo);
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -39,10 +40,15 @@ try {
         $logStmt->execute([
             $logId,
             $data['id'],
-            $user_id['id'],
+            $currentUser['id'],
             $actionText,
             $createdAt
         ]);
+
+        app_log($pdo, 'info', 'api/delete_nest_photo', 'Foto gelöscht', [
+            'nest_id' => $data['id'],
+            'filename' => $nest['photo_filename']
+        ], $currentUser['id']);
 
         echo json_encode(['success' => true]);
     } else {
@@ -50,6 +56,10 @@ try {
         echo json_encode(['error' => 'No photo found for this nest']);
     }
 } catch (Exception $e) {
+    app_log($pdo, 'error', 'api/delete_nest_photo', 'Fehler beim Löschen des Fotos', [
+        'exception' => $e->getMessage(),
+        'nest_id' => $data['id'] ?? null
+    ], $currentUser['id']);
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);
 }

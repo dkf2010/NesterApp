@@ -2,6 +2,7 @@
 // backend/api/update_nest_name.php
 require_once 'db.php';
 require_once 'auth/auth_util.php';
+require_once 'app_logger.php';
 
 $currentUser = require_auth($pdo);
 
@@ -28,8 +29,16 @@ try {
         date('Y-m-d H:i:s')
     ]);
 
+    app_log($pdo, 'info', 'api/update_nest_name', "Nest umbenannt zu: {$data['name']}", [
+        'nest_id' => $data['id']
+    ], $currentUser['id']);
+
     echo json_encode(['success' => true]);
 } catch (Exception $e) {
+    app_log($pdo, 'error', 'api/update_nest_name', 'Fehler beim Umbenennen des Nests', [
+        'exception' => $e->getMessage(),
+        'nest_id' => $data['id'] ?? null
+    ], $currentUser['id']);
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);
 }

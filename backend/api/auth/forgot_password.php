@@ -1,6 +1,7 @@
 <?php
 // backend/api/auth/forgot_password.php
 require_once dirname(__DIR__) . '/db.php';
+require_once dirname(__DIR__) . '/app_logger.php';
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -43,8 +44,10 @@ try {
         "X-Mailer: PHP/" . phpversion();
 
     if (mail($email, $subject, $message, $headers)) {
+        app_log($pdo, 'info', 'auth/forgot_password', "Passwort-Reset-E-Mail gesendet an: {$email}");
         echo json_encode(['success' => true]);
     } else {
+        app_log($pdo, 'error', 'auth/forgot_password', "E-Mail-Versand fehlgeschlagen für: {$email}");
         http_response_code(500);
         echo json_encode(['error' => 'Failed to send email']);
     }

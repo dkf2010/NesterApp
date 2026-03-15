@@ -7,9 +7,10 @@ import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import ChangePasswordScreen from './screens/ChangePasswordScreen';
 import UserManagementScreen from './screens/UserManagementScreen';
+import AdminLogsScreen from './screens/AdminLogsScreen';
 import { loadNests, addNest, addLogToNest, deleteNest, updateNestLocation, updateNestName, fetchNearestAmenityName } from './services/nestService';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { LogOut, KeyRound, Users, Egg } from 'lucide-react';
+import { LogOut, KeyRound, Users, Egg, ScrollText } from 'lucide-react';
 import './App.css';
 
 // We separate the actual app content from the provider wrapper so we can use useAuth hook
@@ -25,6 +26,7 @@ function MainApp() {
   const [showForgot, setShowForgot] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showUserManagement, setShowUserManagement] = useState(false);
+  const [showAdminLogs, setShowAdminLogs] = useState(false);
   const [showStats, setShowStats] = useState(false);
 
   // Check for reset token in URL
@@ -48,6 +50,7 @@ function MainApp() {
       if (e.key === 'Escape') {
         if (showStats) setShowStats(false);
         if (selectedNest) setSelectedNest(null);
+        if (showAdminLogs) setShowAdminLogs(false);
         if (showUserManagement) setShowUserManagement(false);
         if (showChangePassword) setShowChangePassword(false);
         if (showForgot) setShowForgot(false);
@@ -58,7 +61,7 @@ function MainApp() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showStats, selectedNest, showUserManagement, showChangePassword, showForgot, isAddingMode, movingNest]);
+  }, [showStats, selectedNest, showAdminLogs, showUserManagement, showChangePassword, showForgot, isAddingMode, movingNest]);
 
   // Calculate eggs swapped today for visible nests
   const todayStr = new Date().toLocaleDateString('de-DE');
@@ -236,17 +239,32 @@ function MainApp() {
       <header className="app-header glass">
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {user?.is_admin && (
-            <button
-              className="logout-button"
-              onClick={() => {
-                setShowChangePassword(false);
-                setShowUserManagement(!showUserManagement);
-              }}
-              aria-label="Benutzerverwaltung"
-              style={{ padding: '0.5rem' }}
-            >
-              <Users size={20} />
-            </button>
+            <>
+              <button
+                className="logout-button"
+                onClick={() => {
+                  setShowChangePassword(false);
+                  setShowUserManagement(!showUserManagement);
+                  setShowAdminLogs(false);
+                }}
+                aria-label="Benutzerverwaltung"
+                style={{ padding: '0.5rem' }}
+              >
+                <Users size={20} />
+              </button>
+              <button
+                className="logout-button"
+                onClick={() => {
+                  setShowChangePassword(false);
+                  setShowUserManagement(false);
+                  setShowAdminLogs(!showAdminLogs);
+                }}
+                aria-label="App-Logs"
+                style={{ padding: '0.5rem' }}
+              >
+                <ScrollText size={20} />
+              </button>
+            </>
           )}
           <button
             className="logout-button"
@@ -276,6 +294,10 @@ function MainApp() {
         <div style={{ position: 'absolute', top: '70px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, width: '90%', maxWidth: '400px' }}>
           <UserManagementScreen onClose={() => setShowUserManagement(false)} />
         </div>
+      )}
+
+      {showAdminLogs && (
+        <AdminLogsScreen onClose={() => setShowAdminLogs(false)} />
       )}
 
       {showStats && (
