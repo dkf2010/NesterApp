@@ -2,6 +2,9 @@
 // backend/api/auth/login.php
 require_once dirname(__DIR__) . '/db.php';
 require_once dirname(__DIR__) . '/app_logger.php';
+require_once dirname(__DIR__) . '/rate_limiter.php';
+
+check_rate_limit($pdo, 'login', 5, 300, 900); // 5 attempts per 5 minutes, 15 minute block
 
 $data = json_decode(file_get_contents('php://input'), true);
 

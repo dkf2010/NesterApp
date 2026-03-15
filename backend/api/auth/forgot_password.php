@@ -2,6 +2,9 @@
 // backend/api/auth/forgot_password.php
 require_once dirname(__DIR__) . '/db.php';
 require_once dirname(__DIR__) . '/app_logger.php';
+require_once dirname(__DIR__) . '/rate_limiter.php';
+
+check_rate_limit($pdo, 'forgot_password', 3, 3600, 3600); // 3 attempts per hour, 1 hour block
 
 $data = json_decode(file_get_contents('php://input'), true);
 
