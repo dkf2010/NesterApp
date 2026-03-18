@@ -58,8 +58,8 @@ jobs:
                   
                   \$sql = file_get_contents('schema.sql');
                   // Strip statements that might cause permission errors on shared hosting
-                  \$sql = preg_replace('/CREATE DATABASE[^;]+;/i', '', \$sql);
-                  \$sql = preg_replace('/USE[^;]+;/i', '', \$sql);
+                  \$sql = preg_replace('/\bCREATE\s+DATABASE\b[^;]+;/i', '', \$sql);
+                  \$sql = preg_replace('/\bUSE\b\s+[^;]+;/i', '', \$sql);
                   \$pdo->exec(\$sql);
                   
                   \$adminHash = password_hash('admin123', PASSWORD_DEFAULT);
