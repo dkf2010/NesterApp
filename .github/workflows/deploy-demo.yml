@@ -20,6 +20,8 @@ jobs:
           node-version: '20'
 
       - name: Install Frontend Dependencies & Build
+        env:
+          VITE_API_BASE_URL: "https://${{ secrets.DEMO_HOST }}/backend/api"
         run: |
           npm ci
           npm run build
