@@ -18,6 +18,17 @@ NesterApp ist eine Open-Source-Webanwendung zur Erfassung und Verwaltung von Tau
 - **Standortverfolgung**: Automatische Benennung basierend auf OpenStreetMap-Einrichtungen oder Straßenadressen.
 - **PWA-fähig**: Kann auf Mobilgeräten für die Berichterstattung von unterwegs installiert werden.
 
+## Demo
+
+Eine Live-Demo ist verfügbar unter: **[nester-demo.philip.ps](https://nester-demo.philip.ps)**
+
+> **Hinweis:** Die Demo-Datenbank wird bei jedem Deployment automatisch zurückgesetzt.
+
+| Konto | Benutzername | Passwort | Rolle |
+|-------|-------------|----------|-------|
+| Admin | `admin` | `admin123` | Administrator |
+| Demo | `demo` | `demo123` | Standardbenutzer |
+
 ## Erste Schritte
 
 Siehe [INSTALLATION.md](INSTALLATION.md) für Anweisungen zur Einrichtung der lokalen Entwicklungsumgebung und zur Bereitstellung in der Produktion.

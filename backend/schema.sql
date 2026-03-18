@@ -48,13 +48,6 @@ ALTER TABLE `taubennest_logs`
   ADD KEY `nest_id` (`nest_id`),
   ADD KEY `user_id` (`user_id`);
 
---
--- Constraints
---
-ALTER TABLE `taubennest_logs`
-  ADD CONSTRAINT `taubennest_logs_ibfk_1` FOREIGN KEY (`nest_id`) REFERENCES `taubennester` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `taubennest_logs_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
 -- --------------------------------------------------------
 
 --
@@ -118,6 +111,10 @@ ALTER TABLE `password_resets`
 --
 ALTER TABLE `user_tokens`
   ADD CONSTRAINT `user_tokens_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+
+ALTER TABLE `taubennest_logs`
+  ADD CONSTRAINT `taubennest_logs_ibfk_1` FOREIGN KEY (`nest_id`) REFERENCES `taubennester` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `taubennest_logs_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
 -- --------------------------------------------------------
 
