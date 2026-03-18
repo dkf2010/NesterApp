@@ -1,0 +1,82 @@
+name: Deploy Demo Instance
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Frontend Dependencies & Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy via rsync
+        uses: easingthemes/ssh-deploy@v5.0.3
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.DEMO_SSH_KEY }}
+          ARGS: "-avzr --delete"
+          SOURCE: "/"
+          TARGET: "/home/philippsnesterdemo/web/nester-demo/"
+          REMOTE_HOST: ${{ secrets.DEMO_HOST }}
+          REMOTE_USER: ${{ secrets.DEMO_USERNAME }}
+          EXCLUDE: "/node_modules/, /.git/, /.github/, /src/, /public/, /vite.config.js, /package.json, /package-lock.json, /README.md, /eslint.config.js, /docs/, /CONTRIBUTING.md, /sync_www.command, /backend/uploads/, /backend/create_admin.php, /.DS_Store"
+
+      - name: Redeploy Database & Set Permissions
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEMO_HOST }}
+          username: ${{ secrets.DEMO_USERNAME }}
+          key: ${{ secrets.DEMO_SSH_KEY }}
+          script: |
+            cd /home/philippsnesterdemo/web/nester-demo/backend
+            
+            # Since you wanted the database redeployed on every deployment, 
+            # we run a PHP script to clean it, apply schema, and create users.
+            php -r "
+              require 'api/db.php';
+              try {
+                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 0');
+                  \$tables = \$pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+                  foreach (\$tables as \$table) {
+                      \$pdo->query('DROP TABLE IF EXISTS \`' . \$table . '\`');
+                  }
+                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 1');
+                  
+                  \$sql = file_get_contents('schema.sql');
+                  // Strip statements that might cause permission errors on shared hosting
+                  \$sql = preg_replace('/CREATE DATABASE[^;]+;/i', '', \$sql);
+                  \$sql = preg_replace('/USE[^;]+;/i', '', \$sql);
+                  \$pdo->exec(\$sql);
+                  
+                  \$adminHash = password_hash('admin123', PASSWORD_DEFAULT);
+                  \$demoHash = password_hash('demo123', PASSWORD_DEFAULT);
+                  
+                  \$stmt = \$pdo->prepare('INSERT INTO users (id, username, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)');
+                  \$stmt->execute([bin2hex(random_bytes(18)), 'admin', 'admin@example.com', \$adminHash, 1]);
+                  \$stmt->execute([bin2hex(random_bytes(18)), 'demo', 'demo@example.com', \$demoHash, 0]);
+                  
+                  echo \"Database successfully cleaned, schema imported, and users created!\n\";
+              } catch (Exception \$e) {
+                  echo \"DB Error: \" . \$e->getMessage() . \"\n\";
+                  exit(1);
+              }
+            "
+            
+            # Fix permissions for the webserver (assuming the usual www-data or client user)
+            chown -R client1:web21 /home/philippsnesterdemo/web/nester-demo/ || true
+            find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \;
+            find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \;
