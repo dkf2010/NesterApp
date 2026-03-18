@@ -33,7 +33,7 @@ jobs:
           TARGET: "/home/philippsnesterdemo/web/nester-demo/"
           REMOTE_HOST: ${{ secrets.DEMO_HOST }}
           REMOTE_USER: ${{ secrets.DEMO_USERNAME }}
-          EXCLUDE: "/node_modules/, /.git/, /.github/, /src/, /public/, /vite.config.js, /package.json, /package-lock.json, /README.md, /eslint.config.js, /docs/, /CONTRIBUTING.md, /sync_www.command, /backend/uploads/, /backend/create_admin.php, /.DS_Store"
+          EXCLUDE: "/node_modules/, /.git/, /.github/, /src/, /public/, /vite.config.js, /package.json, /package-lock.json, /README.md, /eslint.config.js, /docs/, /CONTRIBUTING.md, /sync_www.command, /backend/uploads/, /backend/create_admin.php, /.DS_Store, /.env"
 
       - name: Redeploy Database & Set Permissions
         uses: appleboy/ssh-action@v1.0.3
@@ -77,6 +77,6 @@ jobs:
             "
             
             # Fix permissions for the webserver (assuming the usual www-data or client user)
-            chown -R web21:client1 /home/philippsnesterdemo/web/nester-demo/ || true
-            find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \;
-            find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \;
+            # chown -R web21:client1 /home/philippsnesterdemo/web/nester-demo/ || true
+            # find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \;
+            # find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \;
