@@ -23,6 +23,8 @@ jobs:
         run: |
           npm ci
           npm run build
+          # Move compiled frontend to root so rsync uploads it to the base path
+          rsync -a dist/ ./
 
       - name: Deploy via rsync
         uses: easingthemes/ssh-deploy@v5.0.3
@@ -33,7 +35,7 @@ jobs:
           TARGET: "/home/philippsnesterdemo/web/nester-demo/"
           REMOTE_HOST: ${{ secrets.DEMO_HOST }}
           REMOTE_USER: ${{ secrets.DEMO_USERNAME }}
-          EXCLUDE: "/node_modules/, /.git/, /.github/, /src/, /public/, /vite.config.js, /package.json, /package-lock.json, /README.md, /eslint.config.js, /docs/, /CONTRIBUTING.md, /sync_www.command, /backend/uploads/, /backend/create_admin.php, /.DS_Store, /.env"
+          EXCLUDE: "/node_modules/, /.git/, /.github/, /src/, /public/, /vite.config.js, /package.json, /package-lock.json, /README.md, /eslint.config.js, /docs/, /CONTRIBUTING.md, /sync_www.command, /backend/uploads/, /backend/create_admin.php, /.DS_Store, /.env, /dist/, /INSTALLATION.md, /LICENSE, /.gitignore, /.env.example"
 
       - name: Redeploy Database & Set Permissions
         uses: appleboy/ssh-action@v1.0.3
