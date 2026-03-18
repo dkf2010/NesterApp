@@ -77,6 +77,6 @@ jobs:
             "
             
             # Fix permissions for the webserver (assuming the usual www-data or client user)
-            chown -R client1:web21 /home/philippsnesterdemo/web/nester-demo/ || true
+            chown -R web21:client1 /home/philippsnesterdemo/web/nester-demo/ || true
             find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \;
             find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \;
