@@ -54,13 +54,14 @@ jobs:
                   foreach (\$tables as \$table) {
                       \$pdo->query('DROP TABLE IF EXISTS \`' . \$table . '\`');
                   }
-                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 1');
                   
                   \$sql = file_get_contents('schema.sql');
                   // Strip statements that might cause permission errors on shared hosting
                   \$sql = preg_replace('/\bCREATE\s+DATABASE\b[^;]+;/i', '', \$sql);
                   \$sql = preg_replace('/\bUSE\b\s+[^;]+;/i', '', \$sql);
                   \$pdo->exec(\$sql);
+                  
+                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 1');
                   
                   \$adminHash = password_hash('admin123', PASSWORD_DEFAULT);
                   \$demoHash = password_hash('demo123', PASSWORD_DEFAULT);
