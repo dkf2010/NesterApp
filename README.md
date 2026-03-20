@@ -26,7 +26,6 @@ Eine Live-Demo ist verfügbar unter: **[nester-demo.philip.ps](https://nester-de
 
 | Konto | Benutzername | Passwort | Rolle |
 |-------|-------------|----------|-------|
-| Admin | `admin` | `admin123` | Administrator |
 | Demo | `demo` | `demo123` | Standardbenutzer |
 
 ## Erste Schritte

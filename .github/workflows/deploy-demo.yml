@@ -70,11 +70,9 @@ jobs:
                   
                   \$pdo->query('SET FOREIGN_KEY_CHECKS = 1');
                   
-                  \$adminHash = password_hash('admin123', PASSWORD_DEFAULT);
                   \$demoHash = password_hash('demo123', PASSWORD_DEFAULT);
                   
                   \$stmt = \$pdo->prepare('INSERT INTO users (id, username, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)');
-                  \$stmt->execute([bin2hex(random_bytes(18)), 'admin', 'admin@example.com', \$adminHash, 1]);
                   \$stmt->execute([bin2hex(random_bytes(18)), 'demo', 'demo@example.com', \$demoHash, 0]);
                   
                   echo \"Database successfully cleaned, schema imported, and users created!\n\";
