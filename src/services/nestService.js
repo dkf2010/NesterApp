@@ -1,5 +1,9 @@
-// We will default to a common path structure, e.g. http://localhost/Taubennester/backend/api
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost/Taubennester/backend/api';
+// Dynamically resolve the API base URL from the current server's origin.
+// This ensures the app works on any server without build-time configuration.
+export const API_BASE_URL = (() => {
+    const { protocol, host } = window.location;
+    return `${protocol}//${host}/backend/api`;
+})();
 
 // Helper to build headers with token
 const getHeaders = (token) => {

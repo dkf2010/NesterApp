@@ -31,10 +31,7 @@
      ```bash
      npm install
      ```
-   - Stelle sicher, dass deine `.env` die korrekte API-URL enthält:
-     ```env
-     VITE_API_BASE_URL=http://localhost/NesterApp/backend/api
-     ```
+   - Die API-URL wird automatisch anhand des Servernamens ermittelt – keine manuelle Konfiguration nötig.
    - Starte den Entwicklungsserver:
      ```bash
      npm run dev
