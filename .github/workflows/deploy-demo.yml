@@ -53,34 +53,43 @@ jobs:
             
             # Since you wanted the database redeployed on every deployment, 
             # we run a PHP script to clean it, apply schema, and create users.
-            php -r "
-              require 'api/db.php';
-              try {
-                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 0');
-                  \$tables = \$pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
-                  foreach (\$tables as \$table) {
-                      \$pdo->query('DROP TABLE IF EXISTS \`' . \$table . '\`');
-                  }
-                  
-                  \$sql = file_get_contents('schema.sql');
-                  // Strip statements that might cause permission errors on shared hosting
-                  \$sql = preg_replace('/\bCREATE\s+DATABASE\b[^;]+;/i', '', \$sql);
-                  \$sql = preg_replace('/\bUSE\b\s+[^;]+;/i', '', \$sql);
-                  \$pdo->exec(\$sql);
-                  
-                  \$pdo->query('SET FOREIGN_KEY_CHECKS = 1');
-                  
-                  \$demoHash = password_hash('demo123', PASSWORD_DEFAULT);
-                  
-                  \$stmt = \$pdo->prepare('INSERT INTO users (id, username, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)');
-                  \$stmt->execute([bin2hex(random_bytes(18)), 'demo', 'demo@example.com', \$demoHash, 0]);
-                  
-                  echo \"Database successfully cleaned, schema imported, and users created!\n\";
-              } catch (Exception \$e) {
-                  echo \"DB Error: \" . \$e->getMessage() . \"\n\";
-                  exit(1);
-              }
-            "
+            # We do this via HTTP to avoid CLI missing extensions like PDO.
+            cat << 'EOF' > deploy_reset.php
+            <?php
+            require 'api/db.php';
+            try {
+                $pdo->query('SET FOREIGN_KEY_CHECKS = 0');
+                $tables = $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+                foreach ($tables as $table) {
+                    $pdo->query('DROP TABLE IF EXISTS `' . $table . '`');
+                }
+                
+                $sql = file_get_contents('schema.sql');
+                // Strip statements that might cause permission errors on shared hosting
+                $sql = preg_replace('/\bCREATE\s+DATABASE\b[^;]+;/i', '', $sql);
+                $sql = preg_replace('/\bUSE\b\s+[^;]+;/i', '', $sql);
+                $pdo->exec($sql);
+                
+                $pdo->query('SET FOREIGN_KEY_CHECKS = 1');
+                
+                $demoHash = password_hash('demo123', PASSWORD_DEFAULT);
+                
+                $stmt = $pdo->prepare('INSERT INTO users (id, username, email, password_hash, is_admin) VALUES (?, ?, ?, ?, ?)');
+                $stmt->execute([bin2hex(random_bytes(18)), 'demo', 'demo@example.com', $demoHash, 0]);
+                
+                echo "Database successfully cleaned, schema imported, and users created!\n";
+            } catch (Exception $e) {
+                echo "DB Error: " . $e->getMessage() . "\n";
+                http_response_code(500);
+                exit(1);
+            }
+            EOF
+            
+            # Execute via web request to ensure correct PHP extensions are loaded
+            curl -sSf https://nester-demo.philip.ps/backend/deploy_reset.php || { echo "Curl failed"; rm -f deploy_reset.php; exit 1; }
+            
+            # Clean up
+            rm -f deploy_reset.php
             
             # Fix permissions for the webserver (assuming the usual www-data or client user)
             # chown -R web21:client1 /home/philippsnesterdemo/web/nester-demo/ || true
