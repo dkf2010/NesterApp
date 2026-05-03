@@ -33,6 +33,15 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     }, []);
 
+    useEffect(() => {
+        const handleUnauthorized = () => {
+            logout();
+        };
+        window.addEventListener('auth:unauthorized', handleUnauthorized);
+        return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    }, [logout]);
+
+
     // Wrapper around fetch that automatically logs the user out on 401 responses.
     // Use this for all authenticated API calls instead of raw fetch().
     const fetchWithAuth = useCallback(async (url, options = {}) => {

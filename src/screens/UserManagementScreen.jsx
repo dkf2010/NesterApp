@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { API_BASE_URL } from '../services/nestService';
+import { API_BASE_URL, apiFetch } from '../services/nestService';
 import './AuthScreens.css';
 
 export default function UserManagementScreen({ onClose }) {
@@ -14,7 +14,7 @@ export default function UserManagementScreen({ onClose }) {
 
     const fetchUsers = async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/auth/get_users.php`, {
+            const response = await apiFetch(`${API_BASE_URL}/auth/get_users.php`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await response.json();
@@ -38,7 +38,7 @@ export default function UserManagementScreen({ onClose }) {
         setErrorMessage('');
 
         try {
-            const response = await fetch(`${API_BASE_URL}/auth/create_user.php`, {
+            const response = await apiFetch(`${API_BASE_URL}/auth/create_user.php`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

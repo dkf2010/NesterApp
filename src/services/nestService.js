@@ -1,6 +1,9 @@
 // Dynamically resolve the API base URL from the current server's origin.
 // This ensures the app works on any server without build-time configuration.
 export const API_BASE_URL = (() => {
+    if (import.meta.env.VITE_API_BASE_URL) {
+        return import.meta.env.VITE_API_BASE_URL;
+    }
     const { protocol, host } = window.location;
     return `${protocol}//${host}/backend/api`;
 })();
@@ -14,9 +17,26 @@ const getHeaders = (token) => {
     return headers;
 };
 
+// Wrapper around fetch to handle 401 Unauthorized globally
+export const apiFetch = async (url, options = {}) => {
+    const response = await fetch(url, options);
+    if (response.status === 401) {
+        try {
+            const clone = response.clone();
+            const data = await clone.json();
+            if (data.error !== 'Incorrect current password' && data.error !== 'Invalid credentials') {
+                window.dispatchEvent(new Event('auth:unauthorized'));
+            }
+        } catch (e) {
+            window.dispatchEvent(new Event('auth:unauthorized'));
+        }
+    }
+    return response;
+};
+
 export const loadNests = async (token) => {
     try {
-        const response = await fetch(`${API_BASE_URL}/get_nests.php`);
+        const response = await apiFetch(`${API_BASE_URL}/get_nests.php`);
         if (!response.ok) throw new Error('Network response was not ok');
         return await response.json();
     } catch (e) {
@@ -35,7 +55,7 @@ export const addNest = async (latlng, name, token) => {
     };
 
     try {
-        const response = await fetch(`${API_BASE_URL}/create_nest.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/create_nest.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify(newNest)
@@ -59,7 +79,7 @@ export const addLogToNest = async (nestId, actionText, token) => {
     };
 
     try {
-        const response = await fetch(`${API_BASE_URL}/add_log.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/add_log.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify(newLog)
@@ -74,7 +94,7 @@ export const addLogToNest = async (nestId, actionText, token) => {
 
 export const deleteLogFromNest = async (logId, token) => {
     try {
-        const response = await fetch(`${API_BASE_URL}/delete_log.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/delete_log.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify({ id: logId })
@@ -103,7 +123,7 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
     // fetch will automatically set it to multipart/form-data with the correct boundary when body is FormData.
 
     try {
-        const response = await fetch(`${API_BASE_URL}/upload_nest_photo.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/upload_nest_photo.php`, {
             method: 'POST',
             headers: headers,
             body: formData
@@ -118,7 +138,7 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
 
 export const deleteNest = async (nestId, token) => {
     try {
-        await fetch(`${API_BASE_URL}/delete_nest.php`, {
+        await apiFetch(`${API_BASE_URL}/delete_nest.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify({ id: nestId })
@@ -130,7 +150,7 @@ export const deleteNest = async (nestId, token) => {
 
 export const deleteNestPhoto = async (nestId, token) => {
     try {
-        const response = await fetch(`${API_BASE_URL}/delete_nest_photo.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/delete_nest_photo.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify({ id: nestId })
@@ -145,7 +165,7 @@ export const deleteNestPhoto = async (nestId, token) => {
 
 export const updateNestLocation = async (nestId, latlng, token) => {
     try {
-        await fetch(`${API_BASE_URL}/update_nest.php`, {
+        await apiFetch(`${API_BASE_URL}/update_nest.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify({ id: nestId, lat: latlng.lat, lng: latlng.lng })
@@ -159,7 +179,7 @@ export const updateNestLocation = async (nestId, latlng, token) => {
 
 export const updateNestName = async (nestId, name, token) => {
     try {
-        const response = await fetch(`${API_BASE_URL}/update_nest_name.php`, {
+        const response = await apiFetch(`${API_BASE_URL}/update_nest_name.php`, {
             method: 'POST',
             headers: getHeaders(token),
             body: JSON.stringify({ id: nestId, name })
