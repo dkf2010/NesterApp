@@ -19,7 +19,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install dependencies
         run: npm ci
@@ -42,3 +42,25 @@ jobs:
           files: NesterApp-Release-${{ github.ref_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare production deployment package
+        run: |
+          mkdir prod_deploy_package
+          cp -r dist/* prod_deploy_package/
+          cp -r backend prod_deploy_package/
+          cp .htaccess prod_deploy_package/
+          rm -rf prod_deploy_package/backend/uploads
+          rm -f prod_deploy_package/backend/create_admin.php
+
+      - name: Deploy to Production FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.PROD_FTP_HOST }}
+          username: ${{ secrets.PROD_FTP_USER }}
+          password: ${{ secrets.PROD_FTP_PASS }}
+          local-dir: ./prod_deploy_package/
+          server-dir: ./
+          exclude: |
+            **/backend/uploads/**
+            **/backend/create_admin.php
+
