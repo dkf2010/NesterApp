@@ -371,7 +371,7 @@ function MainApp() {
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#ec4899', flexShrink: 0 }}></div>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#f9a8d4', flexShrink: 0 }}></div>
                 <span>Küken</span>
               </div>
               <span style={{ fontWeight: 'bold' }}>{statusCounts.kueken}</span>

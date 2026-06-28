@@ -124,7 +124,7 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
             id: "chicks",
             label: "Küken",
             icon: <Bird size={20} />,
-            color: "#ec4899", // Pink
+            color: "#f9a8d4", // Pastel Pink
             hasSplit: true,
             splitLabels: ['1 Küken', '2 Küken']
         },
