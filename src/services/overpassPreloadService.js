@@ -1,5 +1,6 @@
 import { isGridCached, saveCachedPOIs } from './db';
 import { fetchIndoorGeoJson } from './indoorService';
+import { API_BASE_URL } from './nestService';
 
 export const PRELOAD_MIN_ZOOM = 16;
 const GRID_SIZE = 0.005; // ~500m grid cell size
@@ -93,28 +94,52 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
             out center;
         `;
 
-        const shuffledEndpoints = [...overpassEndpoints].sort(() => Math.random() - 0.5);
         let data = null;
 
-        for (const ep of shuffledEndpoints) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 7000);
+        // 1. Try server-side proxy first
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-                const response = await fetch(ep, {
-                    method: 'POST',
-                    headers: { 'Accept': 'application/json' },
-                    body: query,
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
+            const response = await fetch(`${API_BASE_URL}/overpass.php`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'data=' + encodeURIComponent(query),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
 
-                if (response.ok) {
-                    data = await response.json();
-                    break;
+            if (response.ok) {
+                data = await response.json();
+            }
+        } catch {
+            // Fallback below
+        }
+
+        // 2. Direct fallback
+        if (!data || !data.elements) {
+            const fallbackEndpoints = [
+                'https://lz4.overpass-api.de/api/interpreter',
+                'https://overpass-api.de/api/interpreter'
+            ];
+
+            for (const ep of fallbackEndpoints) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                    const response = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeoutId);
+
+                    if (response.ok) {
+                        data = await response.json();
+                        break;
+                    }
+                } catch {
+                    // Try next endpoint silently
                 }
-            } catch {
-                // Try next endpoint silently
             }
         }
 

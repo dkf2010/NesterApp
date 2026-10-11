@@ -380,14 +380,10 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         return cachedPOI;
     }
 
-    const cachedName = await getCachedAmenity(gridKey);
-    if (cachedName) {
-        return cachedName;
-    }
-
-    // 2. If offline, return clean fallback name immediately without stalling
+    // 2. If offline, check fallback cache or return clean coordinates fallback immediately
     if (!navigator.onLine) {
-        return `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        const cachedFallback = await getCachedAmenity(gridKey);
+        return cachedFallback || `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
 
     const radius = 50; // Overpass query bounding radius (meters)
@@ -426,39 +422,56 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         out center;
     `;
 
-    const overpassEndpoints = [
-        'https://lz4.overpass-api.de/api/interpreter',
-        'https://overpass.osm.ch/api/interpreter',
-        'https://overpass-api.de/api/interpreter'
-    ].sort(() => Math.random() - 0.5);
-
     let data = null;
-    let fallbackSuccess = false;
 
-    for (const endpoint of overpassEndpoints) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 6000);
+    // 1. Try our server-side proxy first (prevents CORS, 406 blocks, and mirror failures)
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Accept': 'application/json' },
-                body: query,
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
+        const response = await fetch(`${API_BASE_URL}/overpass.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'data=' + encodeURIComponent(query),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
-            if (response.ok) {
-                data = await response.json();
-                fallbackSuccess = true;
-                break;
+        if (response.ok) {
+            data = await response.json();
+        }
+    } catch {
+        // Fallback to direct mirrors below
+    }
+
+    // 2. Direct mirror fallback if backend proxy was unreachable
+    if (!data || !data.elements) {
+        const fallbackEndpoints = [
+            'https://lz4.overpass-api.de/api/interpreter',
+            'https://overpass-api.de/api/interpreter'
+        ];
+
+        for (const endpoint of fallbackEndpoints) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    data = await response.json();
+                    break;
+                }
+            } catch {
+                // try next endpoint
             }
-        } catch {
-            // try next endpoint
         }
     }
 
-    if (!fallbackSuccess || !data) {
+    if (!data || !data.elements) {
         return `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
 

@@ -1,4 +1,5 @@
 import { getDB } from './db';
+import { API_BASE_URL } from './nestService';
 
 /**
  * Convert Overpass 'out geom;' elements into a GeoJSON FeatureCollection.
@@ -104,50 +105,73 @@ export const fetchIndoorGeoJson = async (bounds) => {
         out geom;
     `;
 
-    const endpoints = [
-        'https://lz4.overpass-api.de/api/interpreter',
-        'https://overpass.osm.ch/api/interpreter',
-        'https://overpass-api.de/api/interpreter'
-    ];
+    let data = null;
 
-    for (const ep of endpoints) {
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 6000);
+    // 1. Try server-side proxy first
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 7000);
 
-            const res = await fetch(ep, {
-                method: 'POST',
-                headers: { 'Accept': 'application/json' },
-                body: query,
-                signal: controller.signal
-            });
-            clearTimeout(timeout);
+        const res = await fetch(`${API_BASE_URL}/overpass.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'data=' + encodeURIComponent(query),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
 
-            if (res.ok) {
-                const data = await res.json();
-                if (data && data.elements) {
-                    const geoJson = osmGeomToGeoJson(data.elements);
+        if (res.ok) {
+            data = await res.json();
+        }
+    } catch {
+        // Fallback below
+    }
 
-                    // Cache in IndexedDB
-                    try {
-                        const db = await getDB();
-                        if (db.objectStoreNames.contains('overpass_cache')) {
-                            await db.put('overpass_cache', {
-                                key: cacheKey,
-                                geoJson,
-                                timestamp: Date.now()
-                            });
-                        }
-                    } catch {
-                        // ignore cache write error
-                    }
+    // 2. Direct mirror fallback
+    if (!data || !data.elements) {
+        const endpoints = [
+            'https://lz4.overpass-api.de/api/interpreter',
+            'https://overpass-api.de/api/interpreter'
+        ];
 
-                    return geoJson;
+        for (const ep of endpoints) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 6000);
+
+                const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+
+                if (res.ok) {
+                    data = await res.json();
+                    break;
                 }
+            } catch {
+                // try next endpoint
+            }
+        }
+    }
+
+    if (data && data.elements) {
+        const geoJson = osmGeomToGeoJson(data.elements);
+
+        // Cache in IndexedDB
+        try {
+            const db = await getDB();
+            if (db.objectStoreNames.contains('overpass_cache')) {
+                await db.put('overpass_cache', {
+                    key: cacheKey,
+                    geoJson,
+                    timestamp: Date.now()
+                });
             }
         } catch {
-            // try next endpoint
+            // ignore cache write error
         }
+
+        return geoJson;
     }
 
     return { type: 'FeatureCollection', features: [] };
