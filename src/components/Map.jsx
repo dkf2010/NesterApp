@@ -38,19 +38,22 @@ const getMarkerColor = (nest) => {
     return '#3b82f6'; // Fallback to Blue
 };
 
+const getMarkerSvgHtml = (color, isLoading = false) => {
+    const loadingClass = isLoading ? 'marker-loading' : '';
+    return `
+        <svg class="${loadingClass}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="42" fill="${color}" stroke="white" stroke-width="2" style="filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.3)); display: block; pointer-events: none;">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+        </svg>
+    `;
+};
+
 const createMarkerElement = (color, isLoading = false) => {
     const el = document.createElement('div');
     el.className = 'custom-maplibre-marker';
     el.style.width = '32px';
     el.style.height = '42px';
     el.style.cursor = 'pointer';
-
-    const loadingClass = isLoading ? 'marker-loading' : '';
-    el.innerHTML = `
-        <svg class="${loadingClass}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="42" fill="${color}" stroke="white" stroke-width="2" style="filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.3)); display: block;">
-            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-        </svg>
-    `;
+    el.innerHTML = getMarkerSvgHtml(color, isLoading);
     return el;
 };
 
@@ -58,6 +61,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);
     const markersRef = useRef(new Map());
+    const nestsMapRef = useRef(new Map());
     const userMarkerRef = useRef(null);
     const hasInitialCenteredRef = useRef(false);
 
@@ -69,7 +73,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     const onVisibleNestsChangeRef = useRef(onVisibleNestsChange);
     const nestsRef = useRef(nests);
 
-    // Keep callbacks and nests ref updated without reading/writing refs during render
+    // Keep callbacks and nests ref updated
     useEffect(() => {
         onMapClickRef.current = onMapClick;
         onNestSelectRef.current = onNestSelect;
@@ -78,12 +82,12 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     });
 
     // Helper to calculate & notify visible nests
-    const updateVisibleNests = () => {
+    const updateVisibleNests = (currentList) => {
         if (!mapRef.current || !onVisibleNestsChangeRef.current) return;
         const map = mapRef.current;
         const bounds = map.getBounds();
-        const currentNests = nestsRef.current || [];
-        const visible = currentNests.filter(nest => bounds.contains([nest.lng, nest.lat]));
+        const list = currentList || nestsRef.current || [];
+        const visible = list.filter(nest => bounds.contains([nest.lng, nest.lat]));
         onVisibleNestsChangeRef.current(visible);
     };
 
@@ -104,15 +108,27 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
         // Capture map clicks (e.g. for adding/moving nests)
+        // IMPORTANT: Ignore if click originated on a marker
         map.on('click', (e) => {
+            const originalTarget = e.originalEvent?.target;
+            if (
+                originalTarget &&
+                (originalTarget.closest('.custom-maplibre-marker') ||
+                 originalTarget.closest('.maplibregl-marker') ||
+                 originalTarget.closest('.user-location-marker'))
+            ) {
+                return; // User clicked on a marker; do not deselect nest or trigger map click
+            }
+
             if (onMapClickRef.current) {
                 onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
             }
         });
 
         // Trigger visible nests change on pan/zoom
-        map.on('moveend', updateVisibleNests);
-        map.on('zoomend', updateVisibleNests);
+        const handleBoundsChange = () => updateVisibleNests();
+        map.on('moveend', handleBoundsChange);
+        map.on('zoomend', handleBoundsChange);
 
         // Add 3D building extrusion layer once style is loaded (if vector source supports it)
         map.on('load', () => {
@@ -213,10 +229,13 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         };
     }, []);
 
-    // 3. Sync Nest Markers
+    // 3. Sync Nest Markers & Data
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
+
+        // Keep fresh nest lookup map for click callbacks
+        nestsMapRef.current = new Map(nests.map(n => [n.id, n]));
 
         const currentMarkerIds = new Set();
 
@@ -228,14 +247,24 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             if (existingMarker) {
                 // Update position in case it changed (e.g. moved nest)
                 existingMarker.setLngLat([nest.lng, nest.lat]);
+                // Re-render SVG to reflect updated logs, egg swap status, or loading state
+                const el = existingMarker.getElement();
+                el.innerHTML = getMarkerSvgHtml(color, nest.isLoading);
             } else {
-                // Create new marker
+                // Create new marker DOM element
                 const el = createMarkerElement(color, nest.isLoading);
 
+                // Stop interaction events from propagating to map container
+                ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
+                    el.addEventListener(evt, (e) => e.stopPropagation());
+                });
+
                 el.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Prevent triggering map click
+                    e.stopPropagation();
+                    // Always retrieve freshest nest data from map ref
+                    const freshNest = nestsMapRef.current.get(nest.id) || nest;
                     if (onNestSelectRef.current) {
-                        onNestSelectRef.current(nest);
+                        onNestSelectRef.current(freshNest);
                     }
                 });
 
@@ -258,8 +287,8 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
         });
 
-        // Re-calculate visible nests when nest list updates
-        updateVisibleNests();
+        // Re-calculate visible nests with updated list
+        updateVisibleNests(nests);
     }, [nests]);
 
     // Handle Locate Button Click
