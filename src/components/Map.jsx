@@ -205,7 +205,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
 
         map.on('load', () => {
             updateVisibleNests();
-            scheduleOverpassPreload(map);
+            scheduleOverpassPreload(map, true);
             setupIndoorLayers(map);
 
             const layers = map.getStyle().layers || [];
@@ -290,6 +290,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
                     mapRef.current.setCenter([longitude, latitude]);
                     mapRef.current.setZoom(15);
                     hasInitialCenteredRef.current = true;
+                    scheduleOverpassPreload(mapRef.current, true);
                 }
             },
             (err) => {

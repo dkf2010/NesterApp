@@ -2,16 +2,25 @@ import { isGridCached, saveCachedPOIs } from './db';
 import { fetchIndoorGeoJson } from './indoorService';
 import { API_BASE_URL } from './nestService';
 
-export const PRELOAD_MIN_ZOOM = 16;
-const GRID_SIZE = 0.005; // ~500m grid cell size
+export const PRELOAD_MIN_ZOOM = 14;
+export const GRID_SIZE = 0.005; // ~500m grid cell size
 let preloadTimeout = null;
 let isPreloading = false;
 
 const overpassEndpoints = [
-    'https://lz4.overpass-api.de/api/interpreter',
-    'https://overpass.osm.ch/api/interpreter',
-    'https://overpass-api.de/api/interpreter'
+    'https://overpass-api.de/api/interpreter',
+    'https://z.overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter'
 ];
+
+/**
+ * Calculate standard grid key for a coordinate.
+ */
+export const getGridKey = (lat, lng) => {
+    const gridLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+    const gridLng = Math.floor(lng / GRID_SIZE) * GRID_SIZE;
+    return `${gridLat.toFixed(3)},${gridLng.toFixed(3)}`;
+};
 
 /**
  * Calculate list of grid keys for a given bounding box.
@@ -39,13 +48,14 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
     if (zoom < PRELOAD_MIN_ZOOM) return;
     if (isPreloading) return;
 
-    const s = bounds.getSouth();
-    const w = bounds.getWest();
-    const n = bounds.getNorth();
-    const e = bounds.getEast();
-
-    // Check if bounds are unusually large (safety guard)
-    if (n - s > 0.05 || e - w > 0.05) return;
+    // Safety clamp: if bounds are large (wide screen or zoom 14), clamp around center (~3.5km x 3.5km)
+    const center = bounds.getCenter();
+    const maxHalfLat = 0.02; // ~2.2km
+    const maxHalfLng = 0.035; // ~2.3km
+    const s = Math.max(bounds.getSouth(), center.lat - maxHalfLat);
+    const n = Math.min(bounds.getNorth(), center.lat + maxHalfLat);
+    const w = Math.max(bounds.getWest(), center.lng - maxHalfLng);
+    const e = Math.min(bounds.getEast(), center.lng + maxHalfLng);
 
     const gridKeys = getGridKeysForBounds(s, w, n, e);
 
@@ -183,7 +193,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
 /**
  * Debounced trigger when the map moves or zooms.
  */
-export const scheduleOverpassPreload = (map) => {
+export const scheduleOverpassPreload = (map, immediate = false) => {
     if (!navigator.onLine) return;
     if (!map) return;
 
@@ -191,7 +201,7 @@ export const scheduleOverpassPreload = (map) => {
         clearTimeout(preloadTimeout);
     }
 
-    preloadTimeout = setTimeout(() => {
+    const run = () => {
         try {
             const zoom = map.getZoom();
             if (zoom >= PRELOAD_MIN_ZOOM) {
@@ -200,5 +210,11 @@ export const scheduleOverpassPreload = (map) => {
         } catch {
             // Map might be unmounted
         }
-    }, 1500);
+    };
+
+    if (immediate) {
+        run();
+    } else {
+        preloadTimeout = setTimeout(run, 350);
+    }
 };

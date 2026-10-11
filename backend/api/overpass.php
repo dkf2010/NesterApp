@@ -60,9 +60,9 @@ if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheLifetime)
 }
 
 $endpoints = [
-    'https://lz4.overpass-api.de/api/interpreter',
     'https://overpass-api.de/api/interpreter',
-    'https://z.overpass-api.de/api/interpreter'
+    'https://z.overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter'
 ];
 
 $successResponse = null;
@@ -73,8 +73,8 @@ foreach ($endpoints as $endpoint) {
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, 'data=' . urlencode($query));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_USERAGENT, 'NesterApp/1.2 (https://nester.hamburgerstadttauben.de; info@hamburgerstadttauben.de)');
     curl_setopt($ch, CURLOPT_REFERER, 'https://nester.hamburgerstadttauben.de/');
     curl_setopt($ch, CURLOPT_HTTPHEADER, [

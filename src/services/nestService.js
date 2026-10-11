@@ -7,9 +7,11 @@ import {
     getCachedAmenity,
     setCachedAmenity,
     findNearestCachedAmenity,
+    isGridCached,
     saveCachedPOIs,
     calculateDistanceMeters
 } from './db';
+import { getGridKey } from './overpassPreloadService';
 import { processSyncQueue } from './syncService';
 import { compressImageFile } from '../utils/imageUtils';
 
@@ -372,15 +374,22 @@ export const updateNestName = async (nestId, name, token) => {
  * Spatial Overpass query with IndexedDB cache and offline fallback
  */
 export const fetchNearestAmenityName = async (lat, lng) => {
-    const gridKey = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+    const gridKey = getGridKey(lat, lng);
 
-    // 1. Check local spatial cache in IndexedDB (nearest POI within 30m, address within 50m, or exact gridKey)
+    // 1. Check local spatial cache in IndexedDB (nearest POI within 30m, address within 50m)
     const cachedPOI = await findNearestCachedAmenity(lat, lng, 30, 50);
     if (cachedPOI) {
         return cachedPOI;
     }
 
-    // 2. If offline, check fallback cache or return clean coordinates fallback immediately
+    // 2. If this grid was already preloaded when the map was visible,
+    // we already have the full POI/address data for this area!
+    const gridAlreadyCached = await isGridCached(gridKey);
+    if (gridAlreadyCached) {
+        return `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
+
+    // 3. If offline, check fallback cache or return clean coordinates fallback immediately
     if (!navigator.onLine) {
         const cachedFallback = await getCachedAmenity(gridKey);
         return cachedFallback || `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
