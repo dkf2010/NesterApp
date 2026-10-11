@@ -5,9 +5,12 @@ import {
     deleteCachedNest,
     addQueueJob,
     getCachedAmenity,
-    setCachedAmenity
+    setCachedAmenity,
+    findNearestCachedAmenity,
+    saveCachedPOIs
 } from './db';
 import { processSyncQueue } from './syncService';
+import { compressImageFile } from '../utils/imageUtils';
 
 // Dynamically resolve the API base URL from the current server's origin.
 export const API_BASE_URL = (() => {
@@ -201,7 +204,9 @@ export const deleteLogFromNest = async (logId, token) => {
 };
 
 export const uploadNestPhoto = async (nestId, photoFile, token) => {
-    const tempUrl = URL.createObjectURL(photoFile);
+    // Compress and normalize to standard JPEG (max 1280px) to prevent iPhone/mobile camera upload failures
+    const imageBlob = await compressImageFile(photoFile, 1280, 1280, 0.82);
+    const tempUrl = URL.createObjectURL(imageBlob);
 
     // Optimistically store temp photo URL in local IndexedDB
     const cachedNests = await getCachedNests();
@@ -211,11 +216,11 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
         await saveCachedNest(targetNest);
     }
 
-    // Always queue the job with binary blob
+    // Always queue the job with compressed binary blob
     await addQueueJob({
         type: 'UPLOAD_PHOTO',
         payload: { nestId },
-        photoBlob: photoFile
+        photoBlob: imageBlob
     });
 
     if (navigator.onLine) {
@@ -368,7 +373,12 @@ export const updateNestName = async (nestId, name, token) => {
 export const fetchNearestAmenityName = async (lat, lng) => {
     const gridKey = `${lat.toFixed(3)},${lng.toFixed(3)}`;
 
-    // 1. Check local spatial cache in IndexedDB
+    // 1. Check local spatial cache in IndexedDB (nearest POI within 80m, or exact gridKey)
+    const cachedPOI = await findNearestCachedAmenity(lat, lng, 80);
+    if (cachedPOI) {
+        return cachedPOI;
+    }
+
     const cachedName = await getCachedAmenity(gridKey);
     if (cachedName) {
         return cachedName;
@@ -462,8 +472,18 @@ export const fetchNearestAmenityName = async (lat, lng) => {
                 }
 
                 if (resolvedName) {
-                    // Save in local spatial cache
+                    // Save in local spatial cache and POI cache
                     await setCachedAmenity(gridKey, resolvedName);
+                    const elLat = closestNode.lat || closestNode.center?.lat || lat;
+                    const elLng = closestNode.lon || closestNode.center?.lon || lng;
+                    await saveCachedPOIs([{
+                        id: closestNode.id,
+                        name: resolvedName,
+                        lat: elLat,
+                        lng: elLng,
+                        type: 'poi'
+                    }], [gridKey]);
+
                     return resolvedName;
                 }
             }

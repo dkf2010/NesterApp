@@ -1,4 +1,4 @@
-import { getQueueJobs, removeQueueJob, saveCachedNest, getCachedNests, getQueueLength } from './db';
+import { getQueueJobs, removeQueueJob, saveCachedNest, getCachedNests, getQueueLength, updateQueueJob } from './db';
 import { API_BASE_URL, apiFetch } from './nestService';
 
 let isSyncing = false;
@@ -10,7 +10,6 @@ const listeners = new Set();
  */
 export const subscribeSyncStatus = (callback) => {
     listeners.add(callback);
-    // Emit initial status
     notifyStatus();
     return () => listeners.delete(callback);
 };
@@ -55,6 +54,7 @@ export const processSyncQueue = async (token) => {
     try {
         for (const job of jobs) {
             let success = false;
+            let errorMessage = null;
 
             try {
                 switch (job.type) {
@@ -65,6 +65,10 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify(job.payload)
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
@@ -75,6 +79,10 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify(job.payload)
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
@@ -85,6 +93,10 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify({ id: job.payload.id })
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
@@ -95,6 +107,10 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify(job.payload)
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
@@ -105,6 +121,10 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify(job.payload)
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
@@ -115,10 +135,21 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify({ id: job.payload.id })
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
                     case 'UPLOAD_PHOTO': {
+                        if (!job.photoBlob) {
+                            // Missing binary blob (e.g. storage cleared)
+                            errorMessage = 'Keine Bilddatei vorhanden';
+                            success = false;
+                            break;
+                        }
+
                         const formData = new FormData();
                         formData.append('id', job.payload.nestId);
                         formData.append('photo', job.photoBlob, 'nest-photo.jpg');
@@ -135,7 +166,6 @@ export const processSyncQueue = async (token) => {
                         if (res.ok) {
                             const data = await res.json();
                             if (data && data.photo_filename) {
-                                // Update local cached nest with official filename
                                 const cachedNests = await getCachedNests();
                                 const target = cachedNests.find(n => n.id === job.payload.nestId);
                                 if (target) {
@@ -145,6 +175,9 @@ export const processSyncQueue = async (token) => {
                                 }
                             }
                             success = true;
+                        } else {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
                         }
                         break;
                     }
@@ -156,22 +189,37 @@ export const processSyncQueue = async (token) => {
                             body: JSON.stringify({ id: job.payload.id })
                         });
                         success = res.ok;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            errorMessage = err.error || `HTTP ${res.status}`;
+                        }
                         break;
                     }
 
                     default:
                         console.warn('Unknown sync job type:', job.type);
-                        success = true; // remove invalid job
+                        success = true;
                 }
             } catch (jobErr) {
                 console.warn(`Job ${job.type} network attempt failed:`, jobErr);
+                errorMessage = jobErr.message || 'Netzwerkfehler';
                 success = false;
             }
 
             if (success) {
                 await removeQueueJob(job.id);
             } else {
-                // If a job fails due to network, stop processing queue to maintain FIFO order
+                job.attempts = (job.attempts || 0) + 1;
+                job.lastError = errorMessage || 'Fehlgeschlagen';
+                await updateQueueJob(job);
+
+                // If fatal error (e.g. 400 Bad Request or missing blob), don't halt other independent queue jobs forever
+                if (errorMessage && errorMessage.includes('400')) {
+                    console.warn(`Job ${job.id} rejected by server (400), skipping to next job.`);
+                    continue;
+                }
+
+                // If general network error, stop queue execution until network recovers
                 console.warn('Stopping sync queue execution until network recovers');
                 break;
             }

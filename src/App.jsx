@@ -9,9 +9,10 @@ import ChangePasswordScreen from './screens/ChangePasswordScreen';
 import UserManagementScreen from './screens/UserManagementScreen';
 import AdminLogsScreen from './screens/AdminLogsScreen';
 import { loadNests, addNest, addLogToNest, deleteNest, updateNestLocation, updateNestName, fetchNearestAmenityName } from './services/nestService';
-import { subscribeSyncStatus, processSyncQueue } from './services/syncService';
+import { subscribeSyncStatus } from './services/syncService';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload } from 'lucide-react';
+import SyncQueueModal from './components/SyncQueueModal';
+import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload, Database } from 'lucide-react';
 import './App.css';
 
 // We separate the actual app content from the provider wrapper so we can use useAuth hook
@@ -29,6 +30,7 @@ function MainApp() {
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showAdminLogs, setShowAdminLogs] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showQueueModal, setShowQueueModal] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ isSyncing: false, pendingCount: 0, isOnline: navigator.onLine });
 
   // Subscribe to offline/sync status
@@ -68,6 +70,7 @@ function MainApp() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        if (showQueueModal) setShowQueueModal(false);
         if (showStats) setShowStats(false);
         if (selectedNest) setSelectedNest(null);
         if (showAdminLogs) setShowAdminLogs(false);
@@ -81,7 +84,7 @@ function MainApp() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showStats, selectedNest, showAdminLogs, showUserManagement, showChangePassword, showForgot, isAddingMode, movingNest]);
+  }, [showQueueModal, showStats, selectedNest, showAdminLogs, showUserManagement, showChangePassword, showForgot, isAddingMode, movingNest]);
 
   // Calculate eggs swapped today for visible nests
   const todayStr = new Date().toLocaleDateString('de-DE');
@@ -297,26 +300,43 @@ function MainApp() {
           >
             <KeyRound size={20} />
           </button>
+          <button
+            className="logout-button"
+            onClick={() => setShowQueueModal(true)}
+            aria-label="Cache & Warteschlange"
+            title="Lokaler Speicher & Warteschlange"
+            style={{ padding: '0.5rem' }}
+          >
+            <Database size={20} />
+          </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, justifyContent: 'center' }}>
           <h1 onClick={() => setShowStats(!showStats)} style={{ cursor: 'pointer', margin: 0 }}>NesterApp</h1>
           {!syncStatus.isOnline && (
-            <span className="sync-badge offline" title="Offline: Änderungen werden lokal gespeichert">
+            <button
+              className="sync-badge offline"
+              onClick={() => setShowQueueModal(true)}
+              title="Offline: Warteschlange ansehen"
+            >
               <WifiOff size={14} />
               {syncStatus.pendingCount > 0 ? `${syncStatus.pendingCount}` : ''}
-            </span>
+            </button>
           )}
           {syncStatus.isOnline && syncStatus.isSyncing && (
-            <span className="sync-badge syncing" title="Synchronisiere mit Server...">
+            <button
+              className="sync-badge syncing"
+              onClick={() => setShowQueueModal(true)}
+              title="Synchronisiere: Warteschlange ansehen"
+            >
               <RefreshCw size={14} className="spin-icon" />
               {syncStatus.pendingCount > 0 ? `${syncStatus.pendingCount}` : ''}
-            </span>
+            </button>
           )}
           {syncStatus.isOnline && !syncStatus.isSyncing && syncStatus.pendingCount > 0 && (
             <button
               className="sync-badge pending"
-              onClick={() => processSyncQueue(token)}
-              title="Ausstehende Änderungen jetzt synchronisieren"
+              onClick={() => setShowQueueModal(true)}
+              title="Warteschlange ansehen und verwalten"
             >
               <CloudUpload size={14} />
               {syncStatus.pendingCount}
@@ -327,6 +347,10 @@ function MainApp() {
           <LogOut size={20} />
         </button>
       </header>
+
+      {showQueueModal && (
+        <SyncQueueModal onClose={() => setShowQueueModal(false)} />
+      )}
 
       {showChangePassword && (
         <div style={{ position: 'absolute', top: '70px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, width: '90%', maxWidth: '400px' }}>

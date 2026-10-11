@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { LocateFixed, Layers } from 'lucide-react';
 import { fetchIndoorGeoJson } from '../services/indoorService';
+import { scheduleOverpassPreload } from '../services/overpassPreloadService';
 
 // Configure Web Worker URL for Vite
 maplibregl.setWorkerUrl(maplibreglWorkerUrl);
@@ -195,12 +196,16 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
         });
 
-        const handleBoundsChange = () => updateVisibleNests();
+        const handleBoundsChange = () => {
+            updateVisibleNests();
+            scheduleOverpassPreload(map);
+        };
         map.on('moveend', handleBoundsChange);
         map.on('zoomend', handleBoundsChange);
 
         map.on('load', () => {
             updateVisibleNests();
+            scheduleOverpassPreload(map);
             setupIndoorLayers(map);
 
             const layers = map.getStyle().layers || [];

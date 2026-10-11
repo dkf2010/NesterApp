@@ -102,6 +102,15 @@ export const addQueueJob = async (job) => {
     }
 };
 
+export const updateQueueJob = async (job) => {
+    try {
+        const db = await getDB();
+        await db.put('sync_queue', job);
+    } catch (e) {
+        console.error('Error updating queue job in IndexedDB:', e);
+    }
+};
+
 export const removeQueueJob = async (jobId) => {
     try {
         const db = await getDB();
@@ -123,6 +132,87 @@ export const getQueueLength = async () => {
 /* ==========================================================================
    Overpass Spatial Cache Operations
    ========================================================================== */
+
+export const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
+    const R = 6371000; // meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
+export const isGridCached = async (gridKey) => {
+    try {
+        const db = await getDB();
+        const entry = await db.get('overpass_cache', `grid_${gridKey}`);
+        if (!entry) return false;
+        const maxAge = 14 * 24 * 60 * 60 * 1000;
+        return (Date.now() - entry.timestamp) < maxAge;
+    } catch {
+        return false;
+    }
+};
+
+export const saveCachedPOIs = async (pois = [], gridKeys = []) => {
+    try {
+        const db = await getDB();
+        const tx = db.transaction('overpass_cache', 'readwrite');
+        const store = tx.objectStore('overpass_cache');
+
+        const now = Date.now();
+        for (const poi of pois) {
+            await store.put({
+                key: `poi_${poi.id || `${poi.lat.toFixed(5)}_${poi.lng.toFixed(5)}`}`,
+                name: poi.name,
+                lat: poi.lat,
+                lng: poi.lng,
+                type: 'poi',
+                timestamp: now
+            });
+        }
+
+        for (const gk of gridKeys) {
+            await store.put({
+                key: `grid_${gk}`,
+                timestamp: now,
+                poiCount: pois.length
+            });
+        }
+
+        await tx.done;
+    } catch (e) {
+        console.warn('Failed to save cached POIs in IndexedDB:', e);
+    }
+};
+
+export const findNearestCachedAmenity = async (lat, lng, maxRadiusMeters = 80) => {
+    try {
+        const db = await getDB();
+        if (!db.objectStoreNames.contains('overpass_cache')) return null;
+
+        const all = await db.getAll('overpass_cache');
+        let closest = null;
+        let minDistance = Infinity;
+
+        for (const item of all) {
+            if (!item || !item.name || typeof item.lat !== 'number' || typeof item.lng !== 'number') {
+                continue;
+            }
+            const dist = calculateDistanceMeters(lat, lng, item.lat, item.lng);
+            if (dist < minDistance && dist <= maxRadiusMeters) {
+                minDistance = dist;
+                closest = item.name;
+            }
+        }
+        return closest;
+    } catch {
+        return null;
+    }
+};
 
 export const getCachedAmenity = async (key) => {
     try {
@@ -153,4 +243,105 @@ export const setCachedAmenity = async (key, name) => {
     } catch (e) {
         console.warn('Could not cache amenity in IndexedDB:', e);
     }
+};
+
+/* ==========================================================================
+   Cache Statistics & Clearing Operations
+   ========================================================================== */
+
+export const getStorageStats = async () => {
+    let totalUsageBytes = 0;
+    let totalQuotaBytes = 0;
+
+    if (typeof navigator !== 'undefined' && 'storage' in navigator && 'estimate' in navigator.storage) {
+        try {
+            const estimate = await navigator.storage.estimate();
+            totalUsageBytes = estimate.usage || 0;
+            totalQuotaBytes = estimate.quota || 0;
+        } catch {
+            // ignore
+        }
+    }
+
+    let nestsCount = 0;
+    let queueCount = 0;
+    let overpassCount = 0;
+
+    try {
+        const db = await getDB();
+        nestsCount = await db.count('nests').catch(() => 0);
+        queueCount = await db.count('sync_queue').catch(() => 0);
+        overpassCount = await db.count('overpass_cache').catch(() => 0);
+    } catch {
+        // ignore
+    }
+
+    let tileCacheCount = 0;
+    if (typeof window !== 'undefined' && 'caches' in window) {
+        try {
+            const cacheNames = await caches.keys();
+            for (const name of cacheNames) {
+                if (name.includes('tile') || name.includes('versatiles') || name.includes('osm')) {
+                    const cache = await caches.open(name);
+                    const keys = await cache.keys();
+                    tileCacheCount += keys.length;
+                }
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    return {
+        totalUsageBytes,
+        totalQuotaBytes,
+        nestsCount,
+        queueCount,
+        overpassCount,
+        tileCacheCount
+    };
+};
+
+export const clearTileCache = async () => {
+    if (typeof window !== 'undefined' && 'caches' in window) {
+        try {
+            const cacheNames = await caches.keys();
+            for (const name of cacheNames) {
+                if (name.includes('tile') || name.includes('versatiles') || name.includes('osm')) {
+                    await caches.delete(name);
+                }
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    return false;
+};
+
+export const clearOverpassCache = async () => {
+    try {
+        const db = await getDB();
+        await db.clear('overpass_cache');
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+export const clearNestsCache = async () => {
+    try {
+        const db = await getDB();
+        await db.clear('nests');
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+export const clearAllLocalCaches = async () => {
+    await clearTileCache();
+    await clearOverpassCache();
+    await clearNestsCache();
+    return true;
 };
