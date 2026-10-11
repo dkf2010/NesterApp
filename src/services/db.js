@@ -149,7 +149,7 @@ export const isGridCached = async (gridKey) => {
     try {
         const db = await getDB();
         const entry = await db.get('overpass_cache', `grid_${gridKey}`);
-        if (!entry) return false;
+        if (!entry || entry.poiCount === 0) return false;
         const maxAge = 14 * 24 * 60 * 60 * 1000;
         return (Date.now() - entry.timestamp) < maxAge;
     } catch {

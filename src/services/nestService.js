@@ -382,14 +382,7 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         return cachedPOI;
     }
 
-    // 2. If this grid was already preloaded when the map was visible,
-    // we already have the full POI/address data for this area!
-    const gridAlreadyCached = await isGridCached(gridKey);
-    if (gridAlreadyCached) {
-        return `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-    }
-
-    // 3. If offline, check fallback cache or return clean coordinates fallback immediately
+    // 2. If offline, check fallback cache or return clean coordinates fallback immediately
     if (!navigator.onLine) {
         const cachedFallback = await getCachedAmenity(gridKey);
         return cachedFallback || `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;

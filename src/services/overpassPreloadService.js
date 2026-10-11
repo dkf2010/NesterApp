@@ -79,9 +79,9 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         // 1. Concurrently prefetch indoor features for this area (parking decks, elevators, corridors)
         fetchIndoorGeoJson(bounds).catch(() => {});
 
-        // 2. Fetch POIs & Address points for automatic nest naming
+        // 2. Fetch POIs for automatic nest naming (amenities, shops, tourism, leisure, etc.)
         const query = `
-            [out:json][timeout:12];
+            [out:json][timeout:15];
             (
                 node["amenity"]["name"](${s},${w},${n},${e});
                 way["amenity"]["name"](${s},${w},${n},${e});
@@ -98,8 +98,6 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
                 node["public_transport"]["name"](${s},${w},${n},${e});
                 way["public_transport"]["name"](${s},${w},${n},${e});
                 node["highway"="bus_stop"]["name"](${s},${w},${n},${e});
-                node["addr:housenumber"]["addr:street"](${s},${w},${n},${e});
-                way["addr:housenumber"]["addr:street"](${s},${w},${n},${e});
             );
             out center;
         `;
@@ -109,7 +107,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         // 1. Try server-side proxy first
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 7000);
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
 
             const response = await fetch(`${API_BASE_URL}/overpass.php`, {
                 method: 'POST',
@@ -129,14 +127,15 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         // 2. Direct fallback
         if (!data || !data.elements) {
             const fallbackEndpoints = [
-                'https://lz4.overpass-api.de/api/interpreter',
-                'https://overpass-api.de/api/interpreter'
+                'https://overpass-api.de/api/interpreter',
+                'https://z.overpass-api.de/api/interpreter',
+                'https://lz4.overpass-api.de/api/interpreter'
             ];
 
             for (const ep of fallbackEndpoints) {
                 try {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 6000);
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
                     const response = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
                         signal: controller.signal
@@ -153,14 +152,11 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
             }
         }
 
-        if (data && data.elements) {
+        if (data && Array.isArray(data.elements)) {
             const pois = [];
             for (const el of data.elements) {
                 const hasExplicitName = !!el.tags?.name;
-                let name = el.tags?.name || el.tags?.amenity;
-                if (!name && el.tags?.['addr:street']) {
-                    name = `${el.tags['addr:street']} ${el.tags['addr:housenumber'] || ''}`.trim();
-                }
+                const name = el.tags?.name || el.tags?.amenity;
 
                 const lat = el.lat || el.center?.lat;
                 const lng = el.lon || el.center?.lon;
@@ -179,9 +175,6 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
 
             // Save POIs and mark grid cells as cached
             await saveCachedPOIs(pois, uncachedGridKeys);
-        } else {
-            // Even if empty or no elements, mark grids so we don't spam Overpass in empty areas
-            await saveCachedPOIs([], uncachedGridKeys);
         }
     } catch (e) {
         console.debug('Background Overpass preload skipped:', e);
