@@ -1,52 +1,24 @@
-import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { useState, useEffect, useRef } from 'react';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { LocateFixed } from 'lucide-react';
 
-// Fix for default Leaflet icon paths in React
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+// Configure Web Worker URL for Vite
+maplibregl.setWorkerUrl(maplibreglWorkerUrl);
 
-// A custom map event handler for capturing clicks and map bounds
-function MapInteraction({ onMapClick, nests, onVisibleNestsChange }) {
-    const map = useMap();
+// Default vector style: VersaTiles Colorful (Free OSM vector tiles hosted by OSM/FOSSGIS community)
+// Can be customized via VITE_MAP_STYLE_URL in .env
+const DEFAULT_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL || 'https://tiles.versatiles.org/assets/styles/colorful/style.json';
 
-    const updateVisibleNests = () => {
-        if (!onVisibleNestsChange || !nests) return;
-        const bounds = map.getBounds();
-        const visible = nests.filter(nest => bounds.contains([nest.lat, nest.lng]));
-        // Make sure we only update if the count or IDs actually changed to prevent infinite loops (simplified check)
-        // Just calling it every move/zoom is usually fine, React batches it
-        onVisibleNestsChange(visible);
-    };
+// Center of Hamburg as default [lng, lat]
+const DEFAULT_CENTER = [9.9937, 53.5511];
 
-    useMapEvents({
-        click: (e) => {
-            onMapClick(e.latlng);
-        },
-        moveend: updateVisibleNests,
-        zoomend: updateVisibleNests
-    });
-
-    useEffect(() => {
-        // Slight delay to ensure map has its final size after mounting
-        const timeoutId = setTimeout(updateVisibleNests, 300);
-        return () => clearTimeout(timeoutId);
-    }, [nests, map]);
-
-    return null;
-}
-
-// Map colors to actions
+// Map colors to nest actions
 const getMarkerColor = (nest) => {
     if (!nest.logs || nest.logs.length === 0) return '#3b82f6'; // Blue for new nest
 
-    // Find the latest action that actually changes the nest status
+    // Find latest action changing nest status
     const statusLog = nest.logs.find(log =>
         !log.action.startsWith('Name geändert zu') &&
         !log.action.startsWith('Nest angelegt') &&
@@ -66,85 +38,290 @@ const getMarkerColor = (nest) => {
     return '#3b82f6'; // Fallback to Blue
 };
 
-const createCustomIcon = (color, isLoading = false) => {
+const createMarkerElement = (color, isLoading = false) => {
+    const el = document.createElement('div');
+    el.className = 'custom-maplibre-marker';
+    el.style.width = '32px';
+    el.style.height = '42px';
+    el.style.cursor = 'pointer';
+
     const loadingClass = isLoading ? 'marker-loading' : '';
-    const svgHTML = `
-        <svg class="${loadingClass}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="42" fill="${color}" stroke="white" stroke-width="2" style="filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.3));">
+    el.innerHTML = `
+        <svg class="${loadingClass}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="42" fill="${color}" stroke="white" stroke-width="2" style="filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.3)); display: block;">
             <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
         </svg>
     `;
-
-    return new L.divIcon({
-        className: 'custom-leaflet-marker',
-        html: svgHTML,
-        iconSize: [32, 42],
-        iconAnchor: [16, 42],
-        popupAnchor: [0, -42]
-    });
+    return el;
 };
 
-// Control for localizing user
-function LocateUserControl() {
-    const map = useMap();
+export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibleNestsChange }) {
+    const mapContainerRef = useRef(null);
+    const mapRef = useRef(null);
+    const markersRef = useRef(new Map());
+    const userMarkerRef = useRef(null);
+    const hasInitialCenteredRef = useRef(false);
+
+    const [userPos, setUserPos] = useState(null);
     const [locating, setLocating] = useState(false);
-    const [position, setPosition] = useState(null);
 
+    const onMapClickRef = useRef(onMapClick);
+    const onNestSelectRef = useRef(onNestSelect);
+    const onVisibleNestsChangeRef = useRef(onVisibleNestsChange);
+    const nestsRef = useRef(nests);
+
+    // Keep callbacks and nests ref updated without reading/writing refs during render
     useEffect(() => {
-        let hasSetInitialView = false;
+        onMapClickRef.current = onMapClick;
+        onNestSelectRef.current = onNestSelect;
+        onVisibleNestsChangeRef.current = onVisibleNestsChange;
+        nestsRef.current = nests;
+    });
 
-        const handleLocationFound = (e) => {
-            setLocating(false);
-            setPosition(e.latlng);
+    // Helper to calculate & notify visible nests
+    const updateVisibleNests = () => {
+        if (!mapRef.current || !onVisibleNestsChangeRef.current) return;
+        const map = mapRef.current;
+        const bounds = map.getBounds();
+        const currentNests = nestsRef.current || [];
+        const visible = currentNests.filter(nest => bounds.contains([nest.lng, nest.lat]));
+        onVisibleNestsChangeRef.current(visible);
+    };
 
-            // On the very first location fix after load, center the map
-            if (!hasSetInitialView) {
-                map.flyTo(e.latlng, 15, { animate: false });
-                hasSetInitialView = true;
+    // 1. Initialize MapLibre GL
+    useEffect(() => {
+        if (!mapContainerRef.current) return;
+
+        const map = new maplibregl.Map({
+            container: mapContainerRef.current,
+            style: DEFAULT_STYLE_URL,
+            center: DEFAULT_CENTER,
+            zoom: 12,
+            maxZoom: 22,
+            attributionControl: false
+        });
+
+        // Add attribution control in bottom right
+        map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+
+        // Capture map clicks (e.g. for adding/moving nests)
+        map.on('click', (e) => {
+            if (onMapClickRef.current) {
+                onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
             }
-        };
-        const handleLocationError = (e) => {
-            setLocating(false);
-        };
+        });
 
-        map.on('locationfound', handleLocationFound);
-        map.on('locationerror', handleLocationError);
+        // Trigger visible nests change on pan/zoom
+        map.on('moveend', updateVisibleNests);
+        map.on('zoomend', updateVisibleNests);
 
-        // Track user continuously (does not forcefully re-center after the first time)
-        map.locate({ watch: true, enableHighAccuracy: true });
+        // Add 3D building extrusion layer once style is loaded (if vector source supports it)
+        map.on('load', () => {
+            updateVisibleNests();
+
+            const layers = map.getStyle().layers || [];
+            const labelLayerId = layers.find(
+                (l) => l.type === 'symbol' && l.layout && l.layout['text-field']
+            )?.id;
+
+            // Optional 3D buildings when zooming in (pitch/tilt enabled)
+            if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings')) {
+                map.addLayer(
+                    {
+                        id: '3d-buildings',
+                        source: 'openmaptiles',
+                        'source-layer': 'building',
+                        type: 'fill-extrusion',
+                        minzoom: 15,
+                        paint: {
+                            'fill-extrusion-color': '#d1d5db',
+                            'fill-extrusion-height': [
+                                'interpolate', ['linear'], ['zoom'],
+                                15, 0,
+                                16, ['get', 'render_height']
+                            ],
+                            'fill-extrusion-base': [
+                                'interpolate', ['linear'], ['zoom'],
+                                15, 0,
+                                16, ['get', 'render_min_height']
+                            ],
+                            'fill-extrusion-opacity': 0.6
+                        }
+                    },
+                    labelLayerId
+                );
+            }
+        });
+
+        mapRef.current = map;
+        const markers = markersRef.current;
 
         return () => {
-            map.off('locationfound', handleLocationFound);
-            map.off('locationerror', handleLocationError);
-            map.stopLocate();
+            markers.forEach(marker => marker.remove());
+            markers.clear();
+            if (userMarkerRef.current) {
+                userMarkerRef.current.remove();
+                userMarkerRef.current = null;
+            }
+            map.remove();
+            mapRef.current = null;
         };
-    }, [map]);
+    }, []);
 
-    const locate = () => {
+    // 2. Geolocation tracking
+    useEffect(() => {
+        if (!('geolocation' in navigator)) return;
+
+        const watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                const { longitude, latitude } = pos.coords;
+                setUserPos({ lng: longitude, lat: latitude });
+
+                if (!mapRef.current) return;
+
+                if (!userMarkerRef.current) {
+                    const el = document.createElement('div');
+                    el.className = 'user-location-marker';
+                    el.style.backgroundColor = '#3b82f6';
+                    el.style.width = '16px';
+                    el.style.height = '16px';
+                    el.style.borderRadius = '50%';
+                    el.style.border = '3px solid white';
+                    el.style.boxShadow = '0 0 5px rgba(0,0,0,0.5)';
+                    el.style.pointerEvents = 'none';
+
+                    userMarkerRef.current = new maplibregl.Marker({ element: el })
+                        .setLngLat([longitude, latitude])
+                        .addTo(mapRef.current);
+                } else {
+                    userMarkerRef.current.setLngLat([longitude, latitude]);
+                }
+
+                if (!hasInitialCenteredRef.current) {
+                    mapRef.current.setCenter([longitude, latitude]);
+                    mapRef.current.setZoom(15);
+                    hasInitialCenteredRef.current = true;
+                }
+            },
+            (err) => {
+                console.warn('Geolocation watch error:', err);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+        );
+
+        return () => {
+            navigator.geolocation.clearWatch(watchId);
+        };
+    }, []);
+
+    // 3. Sync Nest Markers
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        const currentMarkerIds = new Set();
+
+        nests.forEach((nest) => {
+            currentMarkerIds.add(nest.id);
+            const color = getMarkerColor(nest);
+            const existingMarker = markersRef.current.get(nest.id);
+
+            if (existingMarker) {
+                // Update position in case it changed (e.g. moved nest)
+                existingMarker.setLngLat([nest.lng, nest.lat]);
+            } else {
+                // Create new marker
+                const el = createMarkerElement(color, nest.isLoading);
+
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent triggering map click
+                    if (onNestSelectRef.current) {
+                        onNestSelectRef.current(nest);
+                    }
+                });
+
+                const marker = new maplibregl.Marker({
+                    element: el,
+                    anchor: 'bottom'
+                })
+                    .setLngLat([nest.lng, nest.lat])
+                    .addTo(map);
+
+                markersRef.current.set(nest.id, marker);
+            }
+        });
+
+        // Remove obsolete markers
+        markersRef.current.forEach((marker, id) => {
+            if (!currentMarkerIds.has(id)) {
+                marker.remove();
+                markersRef.current.delete(id);
+            }
+        });
+
+        // Re-calculate visible nests when nest list updates
+        updateVisibleNests();
+    }, [nests]);
+
+    // Handle Locate Button Click
+    const handleLocateClick = (e) => {
+        e.preventDefault();
         setLocating(true);
-        if (position) {
-            // Zoom in extremely close (level 19) when requested
-            map.flyTo(position, 19, { animate: true });
+
+        if (userPos && mapRef.current) {
+            mapRef.current.flyTo({
+                center: [userPos.lng, userPos.lat],
+                zoom: 19,
+                essential: true
+            });
             setLocating(false);
+        } else if ('geolocation' in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const { longitude, latitude } = pos.coords;
+                    setUserPos({ lng: longitude, lat: latitude });
+                    mapRef.current?.flyTo({
+                        center: [longitude, latitude],
+                        zoom: 19,
+                        essential: true
+                    });
+                    setLocating(false);
+                },
+                (err) => {
+                    console.error('Locate error:', err);
+                    setLocating(false);
+                    alert('Standort konnte nicht ermittelt werden.');
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
         } else {
-            // Force re-check if unknown
-            map.locate({ watch: true, enableHighAccuracy: true });
+            setLocating(false);
         }
     };
 
-    const userIcon = new L.divIcon({
-        className: 'user-location-marker',
-        html: `<div style="background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11]
-    });
-
     return (
-        <>
-            <div className="leaflet-top leaflet-right" style={{ top: 'calc(env(safe-area-inset-top, 20px) + 60px)', right: '10px' }}>
-                <div className="leaflet-control leaflet-bar" style={{ border: 'none', boxShadow: 'var(--shadow-md)', borderRadius: 'var(--radius-md)' }}>
+        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+
+            {/* Locate User Control button */}
+            <div
+                style={{
+                    position: 'absolute',
+                    top: 'calc(env(safe-area-inset-top, 20px) + 60px)',
+                    right: '10px',
+                    zIndex: 10
+                }}
+            >
+                <div
+                    style={{
+                        border: 'none',
+                        boxShadow: 'var(--shadow-md)',
+                        borderRadius: 'var(--radius-md)',
+                        overflow: 'hidden'
+                    }}
+                >
                     <a
                         href="#"
-                        onClick={(e) => { e.preventDefault(); locate(); }}
+                        onClick={handleLocateClick}
                         style={{
                             display: 'flex',
                             justifyContent: 'center',
@@ -153,8 +330,7 @@ function LocateUserControl() {
                             height: '34px',
                             backgroundColor: locating ? '#e2e8f0' : 'var(--surface-color)',
                             color: 'var(--primary-color)',
-                            textDecoration: 'none',
-                            borderRadius: 'var(--radius-md)'
+                            textDecoration: 'none'
                         }}
                         title="Meinen Standort finden"
                     >
@@ -162,50 +338,6 @@ function LocateUserControl() {
                     </a>
                 </div>
             </div>
-
-            {position && (
-                <Marker position={position} icon={userIcon} interactive={false} zIndexOffset={1000} />
-            )}
-        </>
-    );
-}
-
-export default function Map({ nests, onNestSelect, onMapClick, onVisibleNestsChange }) {
-    // Center of Hamburg as default if location is unavailable
-    const defaultCenter = [53.5511, 9.9937];
-
-    return (
-        <MapContainer
-            center={defaultCenter}
-            zoom={12}
-            zoomControl={false} // We can position it manually or leave it out for mobile
-            style={{ height: '100%', width: '100%' }}
-            maxZoom={24}
-        >
-            <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maxZoom={24}
-                maxNativeZoom={19}
-            />
-
-            <LocateUserControl />
-            <MapInteraction onMapClick={onMapClick} nests={nests} onVisibleNestsChange={onVisibleNestsChange} />
-
-            {/* Render existing Nests */}
-            {nests.map((nest) => (
-                <Marker
-                    key={nest.id}
-                    position={[nest.lat, nest.lng]}
-                    icon={createCustomIcon(getMarkerColor(nest), nest.isLoading)}
-                    eventHandlers={{
-                        click: (e) => {
-                            L.DomEvent.stopPropagation(e); // Prevent map click event
-                            onNestSelect(nest);
-                        },
-                    }}
-                />
-            ))}
-        </MapContainer>
+        </div>
     );
 }
