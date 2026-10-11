@@ -78,6 +78,17 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
                 way["amenity"]["name"](${s},${w},${n},${e});
                 node["shop"]["name"](${s},${w},${n},${e});
                 way["shop"]["name"](${s},${w},${n},${e});
+                node["tourism"]["name"](${s},${w},${n},${e});
+                way["tourism"]["name"](${s},${w},${n},${e});
+                node["leisure"]["name"](${s},${w},${n},${e});
+                way["leisure"]["name"](${s},${w},${n},${e});
+                node["historic"]["name"](${s},${w},${n},${e});
+                way["historic"]["name"](${s},${w},${n},${e});
+                node["railway"]["name"](${s},${w},${n},${e});
+                way["railway"]["name"](${s},${w},${n},${e});
+                node["public_transport"]["name"](${s},${w},${n},${e});
+                way["public_transport"]["name"](${s},${w},${n},${e});
+                node["highway"="bus_stop"]["name"](${s},${w},${n},${e});
                 node["addr:housenumber"]["addr:street"](${s},${w},${n},${e});
                 way["addr:housenumber"]["addr:street"](${s},${w},${n},${e});
             );
@@ -112,6 +123,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         if (data && data.elements) {
             const pois = [];
             for (const el of data.elements) {
+                const hasExplicitName = !!el.tags?.name;
                 let name = el.tags?.name || el.tags?.amenity;
                 if (!name && el.tags?.['addr:street']) {
                     name = `${el.tags['addr:street']} ${el.tags['addr:housenumber'] || ''}`.trim();
@@ -124,6 +136,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
                     pois.push({
                         id: el.id,
                         name,
+                        isNamed: hasExplicitName,
                         lat,
                         lng,
                         type: 'poi'

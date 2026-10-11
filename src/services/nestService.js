@@ -7,7 +7,8 @@ import {
     getCachedAmenity,
     setCachedAmenity,
     findNearestCachedAmenity,
-    saveCachedPOIs
+    saveCachedPOIs,
+    calculateDistanceMeters
 } from './db';
 import { processSyncQueue } from './syncService';
 import { compressImageFile } from '../utils/imageUtils';
@@ -373,8 +374,8 @@ export const updateNestName = async (nestId, name, token) => {
 export const fetchNearestAmenityName = async (lat, lng) => {
     const gridKey = `${lat.toFixed(3)},${lng.toFixed(3)}`;
 
-    // 1. Check local spatial cache in IndexedDB (nearest POI within 80m, or exact gridKey)
-    const cachedPOI = await findNearestCachedAmenity(lat, lng, 80);
+    // 1. Check local spatial cache in IndexedDB (nearest POI within 30m, address within 50m, or exact gridKey)
+    const cachedPOI = await findNearestCachedAmenity(lat, lng, 30, 50);
     if (cachedPOI) {
         return cachedPOI;
     }
@@ -389,7 +390,7 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         return `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
 
-    const radius = 50; // Search within 50 meters
+    const radius = 50; // Overpass query bounding radius (meters)
     const query = `
         [out:json][timeout:10];
         (
@@ -400,6 +401,24 @@ export const fetchNearestAmenityName = async (lat, lng) => {
             node["shop"]["name"](around:${radius},${lat},${lng});
             way["shop"]["name"](around:${radius},${lat},${lng});
             relation["shop"]["name"](around:${radius},${lat},${lng});
+
+            node["tourism"]["name"](around:${radius},${lat},${lng});
+            way["tourism"]["name"](around:${radius},${lat},${lng});
+            relation["tourism"]["name"](around:${radius},${lat},${lng});
+
+            node["leisure"]["name"](around:${radius},${lat},${lng});
+            way["leisure"]["name"](around:${radius},${lat},${lng});
+            relation["leisure"]["name"](around:${radius},${lat},${lng});
+
+            node["historic"]["name"](around:${radius},${lat},${lng});
+            way["historic"]["name"](around:${radius},${lat},${lng});
+            relation["historic"]["name"](around:${radius},${lat},${lng});
+
+            node["railway"]["name"](around:${radius},${lat},${lng});
+            way["railway"]["name"](around:${radius},${lat},${lng});
+            node["public_transport"]["name"](around:${radius},${lat},${lng});
+            way["public_transport"]["name"](around:${radius},${lat},${lng});
+            node["highway"="bus_stop"]["name"](around:${radius},${lat},${lng});
             
             node["addr:housenumber"]["addr:street"](around:${radius},${lat},${lng});
             way["addr:housenumber"]["addr:street"](around:${radius},${lat},${lng});
@@ -447,38 +466,56 @@ export const fetchNearestAmenityName = async (lat, lng) => {
 
     try {
         if (data?.elements && data.elements.length > 0) {
-            let closestNode = null;
-            let minDistance = Infinity;
+            let closestNamedNode = null;
+            let minNamedDist = Infinity;
+            let closestAddressNode = null;
+            let minAddressDist = Infinity;
+
+            const NAMED_RADIUS_METERS = 30; // Max 30m for named POIs
+            const ADDRESS_RADIUS_METERS = 50;
 
             data.elements.forEach(element => {
                 const elLat = element.lat || element.center?.lat;
                 const elLng = element.lon || element.center?.lon;
 
                 if (elLat && elLng) {
-                    const dist = Math.sqrt(Math.pow(elLat - lat, 2) + Math.pow(elLng - lng, 2));
-                    if (dist < minDistance) {
-                        minDistance = dist;
-                        closestNode = element;
+                    const distMeters = calculateDistanceMeters(lat, lng, elLat, elLng);
+
+                    if (element.tags?.name) {
+                        if (distMeters <= NAMED_RADIUS_METERS && distMeters < minNamedDist) {
+                            minNamedDist = distMeters;
+                            closestNamedNode = element;
+                        }
+                    } else if (element.tags?.['addr:street'] && element.tags?.['addr:housenumber']) {
+                        if (distMeters <= ADDRESS_RADIUS_METERS && distMeters < minAddressDist) {
+                            minAddressDist = distMeters;
+                            closestAddressNode = element;
+                        }
                     }
                 }
             });
 
-            if (closestNode?.tags) {
+            // Priority 1: Eigennamen von Geschäften/Einrichtungen (bis 30m)
+            // Priority 2: Reine Straßenadresse als Fallback (bis 50m)
+            const chosenNode = closestNamedNode || closestAddressNode;
+
+            if (chosenNode?.tags) {
                 let resolvedName = null;
-                if (closestNode.tags.name) {
-                    resolvedName = closestNode.tags.name;
-                } else if (closestNode.tags['addr:street'] && closestNode.tags['addr:housenumber']) {
-                    resolvedName = `${closestNode.tags['addr:street']} ${closestNode.tags['addr:housenumber']}`;
+                if (chosenNode.tags.name) {
+                    resolvedName = chosenNode.tags.name;
+                } else if (chosenNode.tags['addr:street'] && chosenNode.tags['addr:housenumber']) {
+                    resolvedName = `${chosenNode.tags['addr:street']} ${chosenNode.tags['addr:housenumber']}`;
                 }
 
                 if (resolvedName) {
                     // Save in local spatial cache and POI cache
                     await setCachedAmenity(gridKey, resolvedName);
-                    const elLat = closestNode.lat || closestNode.center?.lat || lat;
-                    const elLng = closestNode.lon || closestNode.center?.lon || lng;
+                    const elLat = chosenNode.lat || chosenNode.center?.lat || lat;
+                    const elLng = chosenNode.lon || chosenNode.center?.lon || lng;
                     await saveCachedPOIs([{
-                        id: closestNode.id,
+                        id: chosenNode.id,
                         name: resolvedName,
+                        isNamed: !!chosenNode.tags?.name,
                         lat: elLat,
                         lng: elLng,
                         type: 'poi'

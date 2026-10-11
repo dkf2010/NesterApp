@@ -168,6 +168,7 @@ export const saveCachedPOIs = async (pois = [], gridKeys = []) => {
             await store.put({
                 key: `poi_${poi.id || `${poi.lat.toFixed(5)}_${poi.lng.toFixed(5)}`}`,
                 name: poi.name,
+                isNamed: !!poi.isNamed,
                 lat: poi.lat,
                 lng: poi.lng,
                 type: 'poi',
@@ -189,26 +190,38 @@ export const saveCachedPOIs = async (pois = [], gridKeys = []) => {
     }
 };
 
-export const findNearestCachedAmenity = async (lat, lng, maxRadiusMeters = 80) => {
+export const findNearestCachedAmenity = async (lat, lng, maxNamedRadiusMeters = 30, maxAddressRadiusMeters = 50) => {
     try {
         const db = await getDB();
         if (!db.objectStoreNames.contains('overpass_cache')) return null;
 
         const all = await db.getAll('overpass_cache');
-        let closest = null;
-        let minDistance = Infinity;
+        let closestNamed = null;
+        let minNamedDist = Infinity;
+        let closestAddress = null;
+        let minAddressDist = Infinity;
 
         for (const item of all) {
             if (!item || !item.name || typeof item.lat !== 'number' || typeof item.lng !== 'number') {
                 continue;
             }
             const dist = calculateDistanceMeters(lat, lng, item.lat, item.lng);
-            if (dist < minDistance && dist <= maxRadiusMeters) {
-                minDistance = dist;
-                closest = item.name;
+
+            if (item.isNamed) {
+                if (dist <= maxNamedRadiusMeters && dist < minNamedDist) {
+                    minNamedDist = dist;
+                    closestNamed = item.name;
+                }
+            } else {
+                if (dist <= maxAddressRadiusMeters && dist < minAddressDist) {
+                    minAddressDist = dist;
+                    closestAddress = item.name;
+                }
             }
         }
-        return closest;
+
+        // Always prioritize named businesses/POIs (within 30m), otherwise fallback to address (within 50m)
+        return closestNamed || closestAddress || null;
     } catch {
         return null;
     }
