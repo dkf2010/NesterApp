@@ -105,9 +105,9 @@ export const fetchIndoorGeoJson = async (bounds) => {
     `;
 
     const endpoints = [
-        'https://overpass-api.de/api/interpreter',
         'https://lz4.overpass-api.de/api/interpreter',
-        'https://overpass.openstreetmap.fr/api/interpreter'
+        'https://overpass.osm.ch/api/interpreter',
+        'https://overpass-api.de/api/interpreter'
     ];
 
     for (const ep of endpoints) {

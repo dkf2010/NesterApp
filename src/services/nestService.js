@@ -427,11 +427,9 @@ export const fetchNearestAmenityName = async (lat, lng) => {
     `;
 
     const overpassEndpoints = [
-        'https://overpass-api.de/api/interpreter',
         'https://lz4.overpass-api.de/api/interpreter',
-        'https://z.overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter',
-        'https://overpass.openstreetmap.fr/api/interpreter'
+        'https://overpass.osm.ch/api/interpreter',
+        'https://overpass-api.de/api/interpreter'
     ].sort(() => Math.random() - 0.5);
 
     let data = null;
