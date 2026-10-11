@@ -2,13 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-import { LocateFixed } from 'lucide-react';
+import { LocateFixed, Layers } from 'lucide-react';
+import { fetchIndoorGeoJson } from '../services/indoorService';
 
 // Configure Web Worker URL for Vite
 maplibregl.setWorkerUrl(maplibreglWorkerUrl);
 
 // Default vector style: VersaTiles Colorful (Free OSM vector tiles hosted by OSM/FOSSGIS community)
-// Can be customized via VITE_MAP_STYLE_URL in .env
 const DEFAULT_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL || 'https://tiles.versatiles.org/assets/styles/colorful/style.json';
 
 // Center of Hamburg as default [lng, lat]
@@ -18,7 +18,6 @@ const DEFAULT_CENTER = [9.9937, 53.5511];
 const getMarkerColor = (nest) => {
     if (!nest.logs || nest.logs.length === 0) return '#3b82f6'; // Blue for new nest
 
-    // Find latest action changing nest status
     const statusLog = nest.logs.find(log =>
         !log.action.startsWith('Name geändert zu') &&
         !log.action.startsWith('Nest angelegt') &&
@@ -57,6 +56,74 @@ const createMarkerElement = (color, isLoading = false) => {
     return el;
 };
 
+// Setup Indoor GeoJSON Source & Layers
+const setupIndoorLayers = (map) => {
+    if (!map.getSource('indoor-source')) {
+        map.addSource('indoor-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+
+    if (!map.getLayer('indoor-polygons')) {
+        map.addLayer({
+            id: 'indoor-polygons',
+            type: 'fill',
+            source: 'indoor-source',
+            filter: ['==', ['get', 'level'], '0'],
+            paint: {
+                'fill-color': [
+                    'case',
+                    ['==', ['get', 'amenity'], 'parking_space'], '#bfdbfe',
+                    '#e2e8f0'
+                ],
+                'fill-opacity': 0.65
+            }
+        });
+    }
+
+    if (!map.getLayer('indoor-lines')) {
+        map.addLayer({
+            id: 'indoor-lines',
+            type: 'line',
+            source: 'indoor-source',
+            filter: ['==', ['get', 'level'], '0'],
+            paint: {
+                'line-color': [
+                    'case',
+                    ['==', ['get', 'amenity'], 'parking_space'], '#2563eb',
+                    '#475569'
+                ],
+                'line-width': 2
+            }
+        });
+    }
+
+    if (!map.getLayer('indoor-labels')) {
+        map.addLayer({
+            id: 'indoor-labels',
+            type: 'symbol',
+            source: 'indoor-source',
+            filter: ['==', ['get', 'level'], '0'],
+            layout: {
+                'text-field': [
+                    'coalesce',
+                    ['get', 'ref'],
+                    ['get', 'name'],
+                    ['case', ['==', ['get', 'highway'], 'elevator'], 'Aufzug', '']
+                ],
+                'text-size': 11,
+                'text-anchor': 'center'
+            },
+            paint: {
+                'text-color': '#0f172a',
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2
+            }
+        });
+    }
+};
+
 export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibleNestsChange }) {
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);
@@ -67,6 +134,11 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
 
     const [userPos, setUserPos] = useState(null);
     const [locating, setLocating] = useState(false);
+
+    // Indoor mapping states
+    const [indoorActive, setIndoorActive] = useState(false);
+    const [currentLevel, setCurrentLevel] = useState(0);
+    const [indoorLoading, setIndoorLoading] = useState(false);
 
     const onMapClickRef = useRef(onMapClick);
     const onNestSelectRef = useRef(onNestSelect);
@@ -104,11 +176,9 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             attributionControl: false
         });
 
-        // Add attribution control in bottom right
         map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
-        // Capture map clicks (e.g. for adding/moving nests)
-        // IMPORTANT: Ignore if click originated on a marker
+        // Capture map clicks
         map.on('click', (e) => {
             const originalTarget = e.originalEvent?.target;
             if (
@@ -117,7 +187,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
                  originalTarget.closest('.maplibregl-marker') ||
                  originalTarget.closest('.user-location-marker'))
             ) {
-                return; // User clicked on a marker; do not deselect nest or trigger map click
+                return;
             }
 
             if (onMapClickRef.current) {
@@ -125,21 +195,20 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
         });
 
-        // Trigger visible nests change on pan/zoom
         const handleBoundsChange = () => updateVisibleNests();
         map.on('moveend', handleBoundsChange);
         map.on('zoomend', handleBoundsChange);
 
-        // Add 3D building extrusion layer once style is loaded (if vector source supports it)
         map.on('load', () => {
             updateVisibleNests();
+            setupIndoorLayers(map);
 
             const layers = map.getStyle().layers || [];
             const labelLayerId = layers.find(
                 (l) => l.type === 'symbol' && l.layout && l.layout['text-field']
             )?.id;
 
-            // Optional 3D buildings when zooming in (pitch/tilt enabled)
+            // 3D buildings extrusion
             if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings')) {
                 map.addLayer(
                     {
@@ -234,9 +303,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         const map = mapRef.current;
         if (!map) return;
 
-        // Keep fresh nest lookup map for click callbacks
         nestsMapRef.current = new Map(nests.map(n => [n.id, n]));
-
         const currentMarkerIds = new Set();
 
         nests.forEach((nest) => {
@@ -245,23 +312,18 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             const existingMarker = markersRef.current.get(nest.id);
 
             if (existingMarker) {
-                // Update position in case it changed (e.g. moved nest)
                 existingMarker.setLngLat([nest.lng, nest.lat]);
-                // Re-render SVG to reflect updated logs, egg swap status, or loading state
                 const el = existingMarker.getElement();
                 el.innerHTML = getMarkerSvgHtml(color, nest.isLoading);
             } else {
-                // Create new marker DOM element
                 const el = createMarkerElement(color, nest.isLoading);
 
-                // Stop interaction events from propagating to map container
                 ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
                     el.addEventListener(evt, (e) => e.stopPropagation());
                 });
 
                 el.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    // Always retrieve freshest nest data from map ref
                     const freshNest = nestsMapRef.current.get(nest.id) || nest;
                     if (onNestSelectRef.current) {
                         onNestSelectRef.current(freshNest);
@@ -279,7 +341,6 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
         });
 
-        // Remove obsolete markers
         markersRef.current.forEach((marker, id) => {
             if (!currentMarkerIds.has(id)) {
                 marker.remove();
@@ -287,9 +348,49 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
         });
 
-        // Re-calculate visible nests with updated list
         updateVisibleNests(nests);
     }, [nests]);
+
+    // 4. Update Indoor Level & Filter
+    const handleLevelSelect = (level) => {
+        setCurrentLevel(level);
+        const map = mapRef.current;
+        if (!map || !map.isStyleLoaded()) return;
+
+        const levelStr = String(level);
+        const filter = ['==', ['get', 'level'], levelStr];
+        if (map.getLayer('indoor-polygons')) map.setFilter('indoor-polygons', filter);
+        if (map.getLayer('indoor-lines')) map.setFilter('indoor-lines', filter);
+        if (map.getLayer('indoor-labels')) map.setFilter('indoor-labels', filter);
+    };
+
+    // 5. Toggle & Load Indoor Features
+    const toggleIndoor = async () => {
+        const nextState = !indoorActive;
+        setIndoorActive(nextState);
+
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (nextState) {
+            setupIndoorLayers(map);
+            setIndoorLoading(true);
+            try {
+                const geoJson = await fetchIndoorGeoJson(map.getBounds());
+                if (map.getSource('indoor-source')) {
+                    map.getSource('indoor-source').setData(geoJson);
+                }
+                handleLevelSelect(currentLevel);
+            } finally {
+                setIndoorLoading(false);
+            }
+        } else {
+            // Clear indoor features
+            if (map.getSource('indoor-source')) {
+                map.getSource('indoor-source').setData({ type: 'FeatureCollection', features: [] });
+            }
+        }
+    };
 
     // Handle Locate Button Click
     const handleLocateClick = (e) => {
@@ -327,19 +428,25 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         }
     };
 
+    const levels = [2, 1, 0, -1, -2];
+
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
             <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 
-            {/* Locate User Control button */}
+            {/* Map Controls (Right Side) */}
             <div
                 style={{
                     position: 'absolute',
                     top: 'calc(env(safe-area-inset-top, 20px) + 60px)',
                     right: '10px',
-                    zIndex: 10
+                    zIndex: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
                 }}
             >
+                {/* Locate User Control */}
                 <div
                     style={{
                         border: 'none',
@@ -366,6 +473,83 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
                         <LocateFixed size={20} />
                     </a>
                 </div>
+
+                {/* Indoor Mapping Toggle Button */}
+                <div
+                    style={{
+                        border: 'none',
+                        boxShadow: 'var(--shadow-md)',
+                        borderRadius: 'var(--radius-md)',
+                        overflow: 'hidden'
+                    }}
+                >
+                    <button
+                        onClick={toggleIndoor}
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            width: '34px',
+                            height: '34px',
+                            backgroundColor: indoorActive ? 'var(--primary-color)' : 'var(--surface-color)',
+                            color: indoorActive ? '#ffffff' : 'var(--text-main)',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: 0
+                        }}
+                        title="Indoor / Parkdeck-Modus umschalten"
+                    >
+                        <Layers size={18} />
+                    </button>
+                </div>
+
+                {/* Level / Floor Selector (when Indoor mode is active) */}
+                {indoorActive && (
+                    <div
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            backgroundColor: 'var(--surface-color)',
+                            boxShadow: 'var(--shadow-md)',
+                            borderRadius: 'var(--radius-md)',
+                            overflow: 'hidden',
+                            fontSize: '0.75rem',
+                            fontWeight: 600
+                        }}
+                    >
+                        {levels.map((lvl) => {
+                            const isSelected = lvl === currentLevel;
+                            const label = lvl === 0 ? 'EG' : lvl > 0 ? `+${lvl}` : `${lvl}`;
+                            return (
+                                <button
+                                    key={lvl}
+                                    onClick={() => handleLevelSelect(lvl)}
+                                    style={{
+                                        width: '34px',
+                                        height: '28px',
+                                        border: 'none',
+                                        borderBottom: '1px solid var(--border-color)',
+                                        backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
+                                        color: isSelected ? '#ffffff' : 'var(--text-main)',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'background-color 0.15s ease'
+                                    }}
+                                    title={`Ebene / Deck ${label}`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                        {indoorLoading && (
+                            <div style={{ fontSize: '9px', textAlign: 'center', padding: '2px', color: 'var(--text-muted)' }}>
+                                ...
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

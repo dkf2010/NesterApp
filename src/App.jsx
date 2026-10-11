@@ -9,8 +9,9 @@ import ChangePasswordScreen from './screens/ChangePasswordScreen';
 import UserManagementScreen from './screens/UserManagementScreen';
 import AdminLogsScreen from './screens/AdminLogsScreen';
 import { loadNests, addNest, addLogToNest, deleteNest, updateNestLocation, updateNestName, fetchNearestAmenityName } from './services/nestService';
+import { subscribeSyncStatus, processSyncQueue } from './services/syncService';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { LogOut, KeyRound, Users, Egg, ScrollText } from 'lucide-react';
+import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload } from 'lucide-react';
 import './App.css';
 
 // We separate the actual app content from the provider wrapper so we can use useAuth hook
@@ -28,6 +29,15 @@ function MainApp() {
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showAdminLogs, setShowAdminLogs] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ isSyncing: false, pendingCount: 0, isOnline: navigator.onLine });
+
+  // Subscribe to offline/sync status
+  useEffect(() => {
+    const unsubscribe = subscribeSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Check for reset token in URL
   const urlParams = new URLSearchParams(window.location.search);
@@ -41,7 +51,17 @@ function MainApp() {
   };
 
   useEffect(() => {
-    refreshNests();
+    let isMounted = true;
+    if (isAuthenticated) {
+      loadNests(token).then((data) => {
+        if (isMounted && data) {
+          setNests(data);
+        }
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
   }, [isAuthenticated, token]);
 
   // Global keyboard shortcuts
@@ -278,7 +298,31 @@ function MainApp() {
             <KeyRound size={20} />
           </button>
         </div>
-        <h1 onClick={() => setShowStats(!showStats)} style={{ cursor: 'pointer' }}>NesterApp</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, justifyContent: 'center' }}>
+          <h1 onClick={() => setShowStats(!showStats)} style={{ cursor: 'pointer', margin: 0 }}>NesterApp</h1>
+          {!syncStatus.isOnline && (
+            <span className="sync-badge offline" title="Offline: Änderungen werden lokal gespeichert">
+              <WifiOff size={14} />
+              {syncStatus.pendingCount > 0 ? `${syncStatus.pendingCount}` : ''}
+            </span>
+          )}
+          {syncStatus.isOnline && syncStatus.isSyncing && (
+            <span className="sync-badge syncing" title="Synchronisiere mit Server...">
+              <RefreshCw size={14} className="spin-icon" />
+              {syncStatus.pendingCount > 0 ? `${syncStatus.pendingCount}` : ''}
+            </span>
+          )}
+          {syncStatus.isOnline && !syncStatus.isSyncing && syncStatus.pendingCount > 0 && (
+            <button
+              className="sync-badge pending"
+              onClick={() => processSyncQueue(token)}
+              title="Ausstehende Änderungen jetzt synchronisieren"
+            >
+              <CloudUpload size={14} />
+              {syncStatus.pendingCount}
+            </button>
+          )}
+        </div>
         <button className="logout-button" onClick={logout} aria-label="Abmelden" style={{ padding: '0.5rem' }}>
           <LogOut size={20} />
         </button>

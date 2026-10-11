@@ -63,3 +63,41 @@
     animation: pulseLoading 1s ease-in-out infinite;
     transform-origin: bottom center;
 }
+
+/* Offline & Sync Badges */
+.sync-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sync-badge.offline {
+    background-color: #fee2e2;
+    color: #ef4444;
+}
+
+.sync-badge.syncing {
+    background-color: #e0f2fe;
+    color: #0284c7;
+}
+
+.sync-badge.pending {
+    background-color: #fef3c7;
+    color: #d97706;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spin-icon {
+    animation: spin 1s linear infinite;
+}

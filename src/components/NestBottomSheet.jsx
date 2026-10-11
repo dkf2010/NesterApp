@@ -80,9 +80,9 @@ export default function NestBottomSheet({ nest, onClose, onAction, onTitleChange
         }
     };
 
-    const photoUrl = nest.photo_filename
+    const photoUrl = nest.tempPhotoUrl || (nest.photo_filename
         ? `${API_BASE_URL.replace('/api', '')}/uploads/nests/${nest.photo_filename}`
-        : null;
+        : null);
 
     const formatDate = (isoString) => {
         return new Date(isoString).toLocaleString('de-DE', {
