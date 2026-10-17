@@ -73,8 +73,8 @@ foreach ($endpoints as $endpoint) {
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, 'data=' . urlencode($query));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
     curl_setopt($ch, CURLOPT_USERAGENT, 'NesterApp/1.2 (https://nester.hamburgerstadttauben.de; info@hamburgerstadttauben.de)');
     curl_setopt($ch, CURLOPT_REFERER, 'https://nester.hamburgerstadttauben.de/');
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -102,9 +102,9 @@ if ($successResponse !== null) {
     header('X-Cache: MISS');
     echo $successResponse;
 } else {
-    http_response_code(502);
+    http_response_code(503);
     echo json_encode([
-        'error' => 'Overpass mirrors currently unreachable',
+        'error' => 'Overpass mirrors currently unreachable or busy',
         'elements' => []
     ]);
 }
