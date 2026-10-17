@@ -2,6 +2,7 @@ import { getQueueJobs, removeQueueJob, saveCachedNest, getCachedNests, getQueueL
 import { API_BASE_URL, apiFetch } from './nestService';
 
 let isSyncing = false;
+let retryTimeout = null;
 const listeners = new Set();
 
 /**
@@ -27,17 +28,31 @@ const notifyStatus = async () => {
     });
 };
 
+const scheduleQueueRetry = (delayMs = 6000) => {
+    if (retryTimeout) clearTimeout(retryTimeout);
+    retryTimeout = setTimeout(() => {
+        const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        processSyncQueue(token);
+    }, delayMs);
+};
+
 /**
  * Process all jobs currently in the IndexedDB sync queue in FIFO order.
+ * Safe against network drops, slow connections, and timeouts.
  */
-export const processSyncQueue = async (token) => {
+export const processSyncQueue = async (token = (typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null)) => {
+    if (retryTimeout) {
+        clearTimeout(retryTimeout);
+        retryTimeout = null;
+    }
+
     if (isSyncing || !navigator.onLine) {
         notifyStatus();
         return;
     }
 
-    const jobs = await getQueueJobs();
-    if (!jobs || jobs.length === 0) {
+    const initialJobs = await getQueueJobs();
+    if (!initialJobs || initialJobs.length === 0) {
         notifyStatus();
         return;
     }
@@ -52,7 +67,14 @@ export const processSyncQueue = async (token) => {
     };
 
     try {
-        for (const job of jobs) {
+        // Sequentially process items in FIFO order
+        while (navigator.onLine) {
+            const currentJobs = await getQueueJobs();
+            if (!currentJobs || currentJobs.length === 0) {
+                break;
+            }
+
+            const job = currentJobs[0];
             let success = false;
             let errorMessage = null;
 
@@ -63,11 +85,15 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify(job.payload)
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
                             errorMessage = err.error || `HTTP ${res.status}`;
+                            // If nest was already inserted on server during a dropped network response, treat as success
+                            if (errorMessage && (errorMessage.includes('Duplicate entry') || errorMessage.includes('Integrity constraint'))) {
+                                success = true;
+                            }
                         }
                         break;
                     }
@@ -77,11 +103,15 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify(job.payload)
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
                             errorMessage = err.error || `HTTP ${res.status}`;
+                            // If log was already inserted on server during a dropped network response, treat as success
+                            if (errorMessage && (errorMessage.includes('Duplicate entry') || errorMessage.includes('Integrity constraint'))) {
+                                success = true;
+                            }
                         }
                         break;
                     }
@@ -91,7 +121,7 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify({ id: job.payload.id })
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -105,7 +135,7 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify(job.payload)
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -119,7 +149,7 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify(job.payload)
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -133,7 +163,7 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify({ id: job.payload.id })
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -157,11 +187,12 @@ export const processSyncQueue = async (token) => {
                         const headers = {};
                         if (token) headers['Authorization'] = `Bearer ${token}`;
 
+                        // Generous 25s timeout for mobile image uploads
                         const res = await apiFetch(`${API_BASE_URL}/upload_nest_photo.php`, {
                             method: 'POST',
                             headers: headers,
                             body: formData
-                        });
+                        }, 25000);
 
                         if (res.ok) {
                             const data = await res.json();
@@ -187,7 +218,7 @@ export const processSyncQueue = async (token) => {
                             method: 'POST',
                             headers: getHeaders(),
                             body: JSON.stringify({ id: job.payload.id })
-                        });
+                        }, 12000);
                         success = res.ok;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -213,20 +244,28 @@ export const processSyncQueue = async (token) => {
                 job.lastError = errorMessage || 'Fehlgeschlagen';
                 await updateQueueJob(job);
 
-                // If fatal error (e.g. 400 Bad Request or missing blob), don't halt other independent queue jobs forever
-                if (errorMessage && errorMessage.includes('400')) {
+                // If permanent client error (e.g. 400 Bad Request or missing blob), don't halt other queue jobs
+                if (errorMessage && (errorMessage.includes('400') || errorMessage.includes('Keine Bilddatei'))) {
                     console.warn(`Job ${job.id} rejected by server (400), skipping to next job.`);
+                    await removeQueueJob(job.id);
                     continue;
                 }
 
-                // If general network error, stop queue execution until network recovers
-                console.warn('Stopping sync queue execution until network recovers');
+                // If general network error / timeout, pause queue execution and schedule automatic retry
+                console.warn('Pausing sync queue execution due to network/timeout. Scheduled auto-retry.');
+                scheduleQueueRetry(job.attempts <= 3 ? 5000 : 15000);
                 break;
             }
         }
     } finally {
         isSyncing = false;
         notifyStatus();
+
+        // Dispatch sync:completed event if queue is now empty
+        const remainingCount = await getQueueLength();
+        if (remainingCount === 0 && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('sync:completed'));
+        }
     }
 };
 

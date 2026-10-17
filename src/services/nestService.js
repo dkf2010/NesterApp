@@ -3,6 +3,7 @@ import {
     saveCachedNests,
     saveCachedNest,
     deleteCachedNest,
+    getQueueJobs,
     addQueueJob,
     getCachedAmenity,
     setCachedAmenity,
@@ -33,55 +34,179 @@ const getHeaders = (token) => {
     return headers;
 };
 
-// Wrapper around fetch to handle 401 Unauthorized globally
-export const apiFetch = async (url, options = {}) => {
-    const response = await fetch(url, options);
-    if (response.status === 401) {
-        try {
-            const clone = response.clone();
-            const data = await clone.json();
-            if (data.error !== 'Incorrect current password' && data.error !== 'Invalid credentials') {
+// Wrapper around fetch to handle 401 Unauthorized globally and enforce timeout
+export const apiFetch = async (url, options = {}, timeoutMs = 15000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = options.signal || controller.signal;
+
+    try {
+        const response = await fetch(url, { ...options, signal });
+        clearTimeout(timeoutId);
+        if (response.status === 401) {
+            try {
+                const clone = response.clone();
+                const data = await clone.json();
+                if (data.error !== 'Incorrect current password' && data.error !== 'Invalid credentials') {
+                    window.dispatchEvent(new Event('auth:unauthorized'));
+                }
+            } catch {
                 window.dispatchEvent(new Event('auth:unauthorized'));
             }
-        } catch {
-            window.dispatchEvent(new Event('auth:unauthorized'));
+        }
+        return response;
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            throw new Error(`Timeout nach ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw err;
+    }
+};
+
+/**
+ * Merges server nests with local cached changes and pending outbox queue jobs.
+ * This guarantees that locally created/modified nests and logs are never overwritten
+ * before the sync queue finishes uploading them to the server.
+ */
+export const mergeServerNestsWithQueue = (serverNests = [], cachedNests = [], queueJobs = []) => {
+    const nestMap = new Map();
+
+    // 1. Populate map with server nests
+    for (const sn of serverNests) {
+        nestMap.set(sn.id, { ...sn, logs: Array.isArray(sn.logs) ? [...sn.logs] : [] });
+    }
+
+    // 2. Preserve any local optimistic tempPhotoUrls
+    for (const cn of cachedNests) {
+        if (cn.tempPhotoUrl && nestMap.has(cn.id)) {
+            const nest = nestMap.get(cn.id);
+            if (!nest.photo_filename) {
+                nest.tempPhotoUrl = cn.tempPhotoUrl;
+            }
         }
     }
-    return response;
+
+    // 3. Replay pending queue jobs in FIFO order
+    for (const job of queueJobs) {
+        if (!job || !job.payload) continue;
+
+        switch (job.type) {
+            case 'CREATE_NEST': {
+                const newNest = job.payload;
+                if (newNest.id && !nestMap.has(newNest.id)) {
+                    nestMap.set(newNest.id, {
+                        ...newNest,
+                        logs: Array.isArray(newNest.logs) ? [...newNest.logs] : []
+                    });
+                }
+                break;
+            }
+
+            case 'DELETE_NEST': {
+                if (job.payload.id) {
+                    nestMap.delete(job.payload.id);
+                }
+                break;
+            }
+
+            case 'UPDATE_LOCATION': {
+                const { id, lat, lng } = job.payload;
+                if (id && nestMap.has(id)) {
+                    const nest = nestMap.get(id);
+                    nest.lat = lat;
+                    nest.lng = lng;
+                }
+                break;
+            }
+
+            case 'UPDATE_NAME': {
+                const { id, name } = job.payload;
+                if (id && nestMap.has(id)) {
+                    const nest = nestMap.get(id);
+                    nest.name = name;
+                }
+                break;
+            }
+
+            case 'ADD_LOG': {
+                const log = job.payload;
+                if (log.nest_id && nestMap.has(log.nest_id)) {
+                    const nest = nestMap.get(log.nest_id);
+                    if (!nest.logs) nest.logs = [];
+                    if (!nest.logs.some(l => l.id === log.id)) {
+                        nest.logs.unshift(log);
+                    }
+                }
+                break;
+            }
+
+            case 'DELETE_LOG': {
+                const logId = job.payload.id;
+                if (logId) {
+                    for (const nest of nestMap.values()) {
+                        if (nest.logs) {
+                            nest.logs = nest.logs.filter(l => l.id !== logId);
+                        }
+                    }
+                }
+                break;
+            }
+
+            case 'UPLOAD_PHOTO': {
+                const { nestId } = job.payload;
+                if (nestId && nestMap.has(nestId)) {
+                    const localCached = cachedNests.find(c => c.id === nestId);
+                    if (localCached?.tempPhotoUrl) {
+                        nestMap.get(nestId).tempPhotoUrl = localCached.tempPhotoUrl;
+                    }
+                }
+                break;
+            }
+
+            case 'DELETE_PHOTO': {
+                const { id } = job.payload;
+                if (id && nestMap.has(id)) {
+                    const nest = nestMap.get(id);
+                    nest.photo_filename = null;
+                    delete nest.tempPhotoUrl;
+                }
+                break;
+            }
+        }
+    }
+
+    return Array.from(nestMap.values());
 };
 
 export const loadNests = async (token) => {
-    // 1. First retrieve local cached nests from IndexedDB
+    // 1. Retrieve local cached nests from IndexedDB
     const cached = await getCachedNests();
+    const queueJobs = await getQueueJobs();
 
-    // If offline, immediately return cached nests
+    // If offline, return cached nests immediately
     if (!navigator.onLine) {
         return cached;
     }
 
     try {
-        const response = await apiFetch(`${API_BASE_URL}/get_nests.php`);
+        const response = await apiFetch(`${API_BASE_URL}/get_nests.php`, {}, 7000);
         if (!response.ok) throw new Error('Network response was not ok');
         const serverNests = await response.json();
 
-        // Merge server nests with any local temp photo URLs
-        const mergedNests = serverNests.map(sn => {
-            const localMatch = cached.find(cn => cn.id === sn.id);
-            if (localMatch?.tempPhotoUrl && !sn.photo_filename) {
-                return { ...sn, tempPhotoUrl: localMatch.tempPhotoUrl };
-            }
-            return sn;
-        });
+        // Merge server nests with any local temp photo URLs and pending queue jobs
+        const mergedNests = mergeServerNestsWithQueue(serverNests, cached, queueJobs);
 
-        // Save fresh data into IndexedDB
+        // Save fresh merged data into IndexedDB
         await saveCachedNests(mergedNests);
 
-        // Process any pending outbox queue items in background
+        // Process pending outbox queue items in background
         processSyncQueue(token);
 
         return mergedNests;
     } catch (e) {
         console.warn('Could not load nests from API, returning local IndexedDB cache', e);
+        processSyncQueue(token);
         return cached;
     }
 };
@@ -96,34 +221,19 @@ export const addNest = async (latlng, name, token) => {
         logs: []
     };
 
-    // Optimistically save to local IndexedDB
+    // 1. Optimistically save to local IndexedDB
     await saveCachedNest(newNest);
 
-    if (!navigator.onLine) {
-        // Queue for background sync
-        await addQueueJob({
-            type: 'CREATE_NEST',
-            payload: newNest
-        });
-        return newNest;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'CREATE_NEST',
+        payload: newNest
+    });
 
-    try {
-        const response = await apiFetch(`${API_BASE_URL}/create_nest.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify(newNest)
-        });
-        if (!response.ok) throw new Error('Failed to create nest');
-        return newNest;
-    } catch (e) {
-        console.warn('Network failed while saving nest, queued for background sync:', e);
-        await addQueueJob({
-            type: 'CREATE_NEST',
-            payload: newNest
-        });
-        return newNest;
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return newNest;
 };
 
 export const addLogToNest = async (nestId, actionText, token) => {
@@ -134,7 +244,7 @@ export const addLogToNest = async (nestId, actionText, token) => {
         timestamp: new Date().toISOString()
     };
 
-    // Optimistically update nest in local IndexedDB
+    // 1. Optimistically update nest in local IndexedDB
     const cachedNests = await getCachedNests();
     const targetNest = cachedNests.find(n => n.id === nestId);
     if (targetNest) {
@@ -143,34 +253,20 @@ export const addLogToNest = async (nestId, actionText, token) => {
         await saveCachedNest(targetNest);
     }
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'ADD_LOG',
-            payload: newLog
-        });
-        return newLog;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'ADD_LOG',
+        payload: newLog
+    });
 
-    try {
-        const response = await apiFetch(`${API_BASE_URL}/add_log.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify(newLog)
-        });
-        if (!response.ok) throw new Error('Failed to add log');
-        return newLog;
-    } catch (e) {
-        console.warn('Network failed while saving log, queued for background sync:', e);
-        await addQueueJob({
-            type: 'ADD_LOG',
-            payload: newLog
-        });
-        return newLog;
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return newLog;
 };
 
 export const deleteLogFromNest = async (logId, token) => {
-    // Optimistically remove from local IndexedDB
+    // 1. Optimistically remove from local IndexedDB
     const cachedNests = await getCachedNests();
     for (const nest of cachedNests) {
         if (nest.logs && nest.logs.some(l => l.id === logId)) {
@@ -180,30 +276,16 @@ export const deleteLogFromNest = async (logId, token) => {
         }
     }
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'DELETE_LOG',
-            payload: { id: logId }
-        });
-        return true;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'DELETE_LOG',
+        payload: { id: logId }
+    });
 
-    try {
-        const response = await apiFetch(`${API_BASE_URL}/delete_log.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify({ id: logId })
-        });
-        if (!response.ok) throw new Error('Failed to delete log');
-        return true;
-    } catch (e) {
-        console.warn('Network failed while deleting log, queued for background sync:', e);
-        await addQueueJob({
-            type: 'DELETE_LOG',
-            payload: { id: logId }
-        });
-        return true;
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return true;
 };
 
 export const uploadNestPhoto = async (nestId, photoFile, token) => {
@@ -211,7 +293,7 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
     const imageBlob = await compressImageFile(photoFile, 1280, 1280, 0.82);
     const tempUrl = URL.createObjectURL(imageBlob);
 
-    // Optimistically store temp photo URL in local IndexedDB
+    // 1. Optimistically store temp photo URL in local IndexedDB
     const cachedNests = await getCachedNests();
     const targetNest = cachedNests.find(n => n.id === nestId);
     if (targetNest) {
@@ -219,16 +301,15 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
         await saveCachedNest(targetNest);
     }
 
-    // Always queue the job with compressed binary blob
+    // 2. Always queue the job with compressed binary blob
     await addQueueJob({
         type: 'UPLOAD_PHOTO',
         payload: { nestId },
         photoBlob: imageBlob
     });
 
-    if (navigator.onLine) {
-        processSyncQueue(token);
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
 
     return {
         success: true,
@@ -238,34 +319,23 @@ export const uploadNestPhoto = async (nestId, photoFile, token) => {
 };
 
 export const deleteNest = async (nestId, token) => {
-    // Optimistically delete from IndexedDB
+    // 1. Optimistically delete from IndexedDB
     await deleteCachedNest(nestId);
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'DELETE_NEST',
-            payload: { id: nestId }
-        });
-        return;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'DELETE_NEST',
+        payload: { id: nestId }
+    });
 
-    try {
-        await apiFetch(`${API_BASE_URL}/delete_nest.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify({ id: nestId })
-        });
-    } catch (e) {
-        console.warn('Network failed while deleting nest, queued for background sync:', e);
-        await addQueueJob({
-            type: 'DELETE_NEST',
-            payload: { id: nestId }
-        });
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return true;
 };
 
 export const deleteNestPhoto = async (nestId, token) => {
-    // Optimistically remove photo from IndexedDB
+    // 1. Optimistically remove photo from IndexedDB
     const cachedNests = await getCachedNests();
     const targetNest = cachedNests.find(n => n.id === nestId);
     if (targetNest) {
@@ -274,34 +344,20 @@ export const deleteNestPhoto = async (nestId, token) => {
         await saveCachedNest(targetNest);
     }
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'DELETE_PHOTO',
-            payload: { id: nestId }
-        });
-        return { success: true };
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'DELETE_PHOTO',
+        payload: { id: nestId }
+    });
 
-    try {
-        const response = await apiFetch(`${API_BASE_URL}/delete_nest_photo.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify({ id: nestId })
-        });
-        if (!response.ok) throw new Error('Failed to delete photo');
-        return await response.json();
-    } catch (e) {
-        console.warn('Network failed while deleting photo, queued for background sync:', e);
-        await addQueueJob({
-            type: 'DELETE_PHOTO',
-            payload: { id: nestId }
-        });
-        return { success: true };
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return { success: true };
 };
 
 export const updateNestLocation = async (nestId, latlng, token) => {
-    // Optimistically update in local IndexedDB
+    // 1. Optimistically update in local IndexedDB
     const cachedNests = await getCachedNests();
     const targetNest = cachedNests.find(n => n.id === nestId);
     if (targetNest) {
@@ -310,33 +366,20 @@ export const updateNestLocation = async (nestId, latlng, token) => {
         await saveCachedNest(targetNest);
     }
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'UPDATE_LOCATION',
-            payload: { id: nestId, lat: latlng.lat, lng: latlng.lng }
-        });
-        return true;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'UPDATE_LOCATION',
+        payload: { id: nestId, lat: latlng.lat, lng: latlng.lng }
+    });
 
-    try {
-        await apiFetch(`${API_BASE_URL}/update_nest.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify({ id: nestId, lat: latlng.lat, lng: latlng.lng })
-        });
-        return true;
-    } catch (e) {
-        console.warn('Network failed while updating nest location, queued for background sync:', e);
-        await addQueueJob({
-            type: 'UPDATE_LOCATION',
-            payload: { id: nestId, lat: latlng.lat, lng: latlng.lng }
-        });
-        return true;
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return true;
 };
 
 export const updateNestName = async (nestId, name, token) => {
-    // Optimistically update in local IndexedDB
+    // 1. Optimistically update in local IndexedDB
     const cachedNests = await getCachedNests();
     const targetNest = cachedNests.find(n => n.id === nestId);
     if (targetNest) {
@@ -344,30 +387,16 @@ export const updateNestName = async (nestId, name, token) => {
         await saveCachedNest(targetNest);
     }
 
-    if (!navigator.onLine) {
-        await addQueueJob({
-            type: 'UPDATE_NAME',
-            payload: { id: nestId, name }
-        });
-        return true;
-    }
+    // 2. Always put into sync queue
+    await addQueueJob({
+        type: 'UPDATE_NAME',
+        payload: { id: nestId, name }
+    });
 
-    try {
-        const response = await apiFetch(`${API_BASE_URL}/update_nest_name.php`, {
-            method: 'POST',
-            headers: getHeaders(token),
-            body: JSON.stringify({ id: nestId, name })
-        });
-        if (!response.ok) throw new Error('Failed to update nest name');
-        return true;
-    } catch (e) {
-        console.warn('Network failed while updating nest name, queued for background sync:', e);
-        await addQueueJob({
-            type: 'UPDATE_NAME',
-            payload: { id: nestId, name }
-        });
-        return true;
-    }
+    // 3. Process queue sequentially in background
+    processSyncQueue(token);
+
+    return true;
 };
 
 /**

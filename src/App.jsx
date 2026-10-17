@@ -10,6 +10,7 @@ import UserManagementScreen from './screens/UserManagementScreen';
 import AdminLogsScreen from './screens/AdminLogsScreen';
 import { loadNests, addNest, addLogToNest, deleteNest, updateNestLocation, updateNestName, fetchNearestAmenityName } from './services/nestService';
 import { subscribeSyncStatus } from './services/syncService';
+import { getCachedNests } from './services/db';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import SyncQueueModal from './components/SyncQueueModal';
 import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload, Database } from 'lucide-react';
@@ -38,8 +39,17 @@ function MainApp() {
     const unsubscribe = subscribeSyncStatus((status) => {
       setSyncStatus(status);
     });
-    return () => unsubscribe();
-  }, []);
+
+    const handleSyncCompleted = () => {
+      refreshNests();
+    };
+    window.addEventListener('sync:completed', handleSyncCompleted);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('sync:completed', handleSyncCompleted);
+    };
+  }, [isAuthenticated, token]);
 
   // Check for reset token in URL
   const urlParams = new URLSearchParams(window.location.search);
@@ -223,24 +233,24 @@ function MainApp() {
     const success = await updateNestName(nestId, newName, token);
     if (success) {
       await refreshNests();
-      const updatedData = await loadNests(token);
-      const updatedNest = updatedData.find(n => n.id === nestId);
-      setSelectedNest(updatedNest);
+      const cached = await getCachedNests();
+      const updatedNest = cached.find(n => n.id === nestId);
+      if (updatedNest) setSelectedNest(updatedNest);
     }
   };
 
   const handlePhotoUploaded = async (nestId) => {
     await refreshNests();
-    const updatedData = await loadNests(token);
-    const updatedNest = updatedData.find(n => n.id === nestId);
-    setSelectedNest(updatedNest);
+    const cached = await getCachedNests();
+    const updatedNest = cached.find(n => n.id === nestId);
+    if (updatedNest) setSelectedNest(updatedNest);
   };
 
   const handleLogDeleted = async (nestId) => {
     await refreshNests();
-    const updatedData = await loadNests(token);
-    const updatedNest = updatedData.find(n => n.id === nestId);
-    setSelectedNest(updatedNest);
+    const cached = await getCachedNests();
+    const updatedNest = cached.find(n => n.id === nestId);
+    if (updatedNest) setSelectedNest(updatedNest);
   };
 
   const handleDeleteRequest = async (nestId) => {
