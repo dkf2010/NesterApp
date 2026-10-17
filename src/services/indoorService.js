@@ -110,7 +110,7 @@ export const fetchIndoorGeoJson = async (bounds) => {
     // 1. Try server-side proxy first
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 7000);
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
         const res = await fetch(`${API_BASE_URL}/overpass.php`, {
             method: 'POST',
@@ -130,6 +130,8 @@ export const fetchIndoorGeoJson = async (bounds) => {
     // 2. Direct mirror fallback
     if (!data || !data.elements) {
         const endpoints = [
+            'https://overpass.osm.ch/api/interpreter',
+            'https://overpass.private.coffee/api/interpreter',
             'https://lz4.overpass-api.de/api/interpreter',
             'https://overpass-api.de/api/interpreter'
         ];
@@ -137,7 +139,7 @@ export const fetchIndoorGeoJson = async (bounds) => {
         for (const ep of endpoints) {
             try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 6000);
+                const timeout = setTimeout(() => controller.abort(), 5000);
 
                 const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
                     signal: controller.signal

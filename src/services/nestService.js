@@ -429,7 +429,7 @@ export const fetchNearestAmenityName = async (lat, lng) => {
     // 1. Try our server-side proxy first (prevents CORS, 406 blocks, and mirror failures)
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const response = await fetch(`${API_BASE_URL}/overpass.php`, {
             method: 'POST',
@@ -449,6 +449,8 @@ export const fetchNearestAmenityName = async (lat, lng) => {
     // 2. Direct mirror fallback if backend proxy was unreachable
     if (!data || !data.elements) {
         const fallbackEndpoints = [
+            'https://overpass.osm.ch/api/interpreter',
+            'https://overpass.private.coffee/api/interpreter',
             'https://lz4.overpass-api.de/api/interpreter',
             'https://overpass-api.de/api/interpreter'
         ];
@@ -456,7 +458,7 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         for (const endpoint of fallbackEndpoints) {
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 6000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
 
                 const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
                     signal: controller.signal

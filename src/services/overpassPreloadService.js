@@ -12,9 +12,10 @@ let pendingPreload = null;
 let lastNetworkRequestTime = 0;
 
 const overpassEndpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://z.overpass-api.de/api/interpreter',
-    'https://lz4.overpass-api.de/api/interpreter'
+    'https://overpass.osm.ch/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://overpass-api.de/api/interpreter'
 ];
 
 /**
@@ -155,7 +156,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
             for (const ep of overpassEndpoints) {
                 try {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
                     const response = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
                         signal: controller.signal
