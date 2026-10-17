@@ -3,6 +3,7 @@
 require_once dirname(__DIR__) . '/db.php';
 require_once 'auth_util.php';
 require_once dirname(__DIR__) . '/app_logger.php';
+require_once dirname(__DIR__) . '/mail_util.php';
 
 // Only logged in admins can create new users
 $currentUser = require_auth($pdo);
@@ -46,13 +47,17 @@ try {
     $setupLink = $domain . "/?reset_token=" . $token;
 
     $subject = "Willkommen bei der NesterApp";
-    $message = "Hallo $username,\n\nein neues Konto wurde für Sie in der NesterApp angelegt.\nBitte klicken Sie auf den folgenden Link, um ein eigenes Passwort zu vergeben und Ihr Konto zu aktivieren:\n\n" . $setupLink . "\n\n(Dieser Link ist für 7 Tage gültig.)";
-    $mailFrom = get_config('MAIL_FROM_ADDRESS');
-    $headers = "From: " . $mailFrom . "\r\n" .
-        "Reply-To: " . $mailFrom . "\r\n" .
-        "X-Mailer: PHP/" . phpversion();
+    $message = "Hallo $username,\n\n" .
+        "für Sie wurde ein Benutzerkonto in der NesterApp der Hamburger Stadttauben angelegt.\n\n" .
+        "Bitte klicken Sie auf den folgenden Link, um ein eigenes Passwort zu vergeben und Ihr Konto zu aktivieren:\n" .
+        $setupLink . "\n\n" .
+        "(Dieser Link ist für 7 Tage gültig.)\n\n" .
+        "Falls Sie dieses Konto nicht erwartet haben, kontaktieren Sie uns bitte.";
 
-    mail($email, $subject, $message, $headers);
+    $mailSent = send_app_mail($email, $subject, $message);
+    if (!$mailSent) {
+        app_log($pdo, 'warning', 'auth/create_user', "Aktivierungs-E-Mail konnte nicht zugestellt werden an: {$email}");
+    }
 
     app_log($pdo, 'info', 'auth/create_user', "Neuer Benutzer angelegt: {$username}", [
         'new_user_email' => $email

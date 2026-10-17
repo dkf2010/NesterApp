@@ -3,6 +3,7 @@
 require_once dirname(__DIR__) . '/db.php';
 require_once dirname(__DIR__) . '/app_logger.php';
 require_once dirname(__DIR__) . '/rate_limiter.php';
+require_once dirname(__DIR__) . '/mail_util.php';
 
 check_rate_limit($pdo, 'forgot_password', 3, 3600, 3600); // 3 attempts per hour, 1 hour block
 
@@ -40,13 +41,14 @@ try {
     $resetLink = $domain . "/?reset_token=" . $token;
 
     $subject = "Passwort zurücksetzen - NesterApp";
-    $message = "Hallo,\n\njemand hat ein neues Passwort für Ihren Account angefordert.\nKlicken Sie auf den folgenden Link, um ein neues Passwort zu vergeben:\n\n" . $resetLink . "\n\n(Der Link ist für 1 Stunde gültig.)";
-    $mailFrom = get_config('MAIL_FROM_ADDRESS');
-    $headers = "From: " . $mailFrom . "\r\n" .
-        "Reply-To: " . $mailFrom . "\r\n" .
-        "X-Mailer: PHP/" . phpversion();
+    $message = "Hallo,\n\n" .
+        "wir haben eine Anfrage zum Zurücksetzen Ihres Passworts für die NesterApp erhalten.\n\n" .
+        "Klicken Sie auf den folgenden Link, um ein neues Passwort zu vergeben:\n" .
+        $resetLink . "\n\n" .
+        "(Dieser Link ist für 1 Stunde gültig.)\n\n" .
+        "Falls Sie diese Anfrage nicht selbst gestellt haben, können Sie diese E-Mail ignorieren. Ihr Passwort bleibt unverändert.";
 
-    if (mail($email, $subject, $message, $headers)) {
+    if (send_app_mail($email, $subject, $message)) {
         app_log($pdo, 'info', 'auth/forgot_password', "Passwort-Reset-E-Mail gesendet an: {$email}");
         echo json_encode(['success' => true]);
     } else {
