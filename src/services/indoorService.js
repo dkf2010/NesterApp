@@ -74,12 +74,12 @@ export const fetchIndoorGeoJson = async (bounds) => {
 
     const cacheKey = `indoor_${s.toFixed(3)}_${w.toFixed(3)}_${n.toFixed(3)}_${e.toFixed(3)}`;
 
-    // 1. Check IndexedDB cache
+    // 1. Check IndexedDB cache (only accept if it contains actual features)
     try {
         const db = await getDB();
         if (db.objectStoreNames.contains('overpass_cache')) {
             const cached = await db.get('overpass_cache', cacheKey);
-            if (cached && cached.geoJson) {
+            if (cached && cached.geoJson && Array.isArray(cached.geoJson.features) && cached.geoJson.features.length > 0) {
                 return cached.geoJson;
             }
         }
@@ -127,19 +127,18 @@ export const fetchIndoorGeoJson = async (bounds) => {
         // Fallback below
     }
 
-    // 2. Direct mirror fallback
-    if (!data || !data.elements) {
+    // 2. Direct mirror fallback (only global instances)
+    if (!data || !data.elements || data.elements.length === 0) {
         const endpoints = [
-            'https://overpass.osm.ch/api/interpreter',
-            'https://overpass.private.coffee/api/interpreter',
+            'https://overpass-api.de/api/interpreter',
             'https://lz4.overpass-api.de/api/interpreter',
-            'https://overpass-api.de/api/interpreter'
+            'https://z.overpass-api.de/api/interpreter'
         ];
 
         for (const ep of endpoints) {
             try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 5000);
+                const timeout = setTimeout(() => controller.abort(), 8000);
 
                 const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
                     signal: controller.signal
@@ -147,8 +146,11 @@ export const fetchIndoorGeoJson = async (bounds) => {
                 clearTimeout(timeout);
 
                 if (res.ok) {
-                    data = await res.json();
-                    break;
+                    const parsed = await res.json();
+                    if (parsed && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+                        data = parsed;
+                        break;
+                    }
                 }
             } catch {
                 // try next endpoint
@@ -159,18 +161,20 @@ export const fetchIndoorGeoJson = async (bounds) => {
     if (data && data.elements) {
         const geoJson = osmGeomToGeoJson(data.elements);
 
-        // Cache in IndexedDB
-        try {
-            const db = await getDB();
-            if (db.objectStoreNames.contains('overpass_cache')) {
-                await db.put('overpass_cache', {
-                    key: cacheKey,
-                    geoJson,
-                    timestamp: Date.now()
-                });
+        // Cache in IndexedDB only when we found actual features
+        if (geoJson.features && geoJson.features.length > 0) {
+            try {
+                const db = await getDB();
+                if (db.objectStoreNames.contains('overpass_cache')) {
+                    await db.put('overpass_cache', {
+                        key: cacheKey,
+                        geoJson,
+                        timestamp: Date.now()
+                    });
+                }
+            } catch {
+                // ignore cache write error
             }
-        } catch {
-            // ignore cache write error
         }
 
         return geoJson;

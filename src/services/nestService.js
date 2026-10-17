@@ -447,18 +447,17 @@ export const fetchNearestAmenityName = async (lat, lng) => {
     }
 
     // 2. Direct mirror fallback if backend proxy was unreachable
-    if (!data || !data.elements) {
+    if (!data || !data.elements || data.elements.length === 0) {
         const fallbackEndpoints = [
-            'https://overpass.osm.ch/api/interpreter',
-            'https://overpass.private.coffee/api/interpreter',
+            'https://overpass-api.de/api/interpreter',
             'https://lz4.overpass-api.de/api/interpreter',
-            'https://overpass-api.de/api/interpreter'
+            'https://z.overpass-api.de/api/interpreter'
         ];
 
         for (const endpoint of fallbackEndpoints) {
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
 
                 const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
                     signal: controller.signal
@@ -466,8 +465,11 @@ export const fetchNearestAmenityName = async (lat, lng) => {
                 clearTimeout(timeoutId);
 
                 if (response.ok) {
-                    data = await response.json();
-                    break;
+                    const parsed = await response.json();
+                    if (parsed && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+                        data = parsed;
+                        break;
+                    }
                 }
             } catch {
                 // try next endpoint

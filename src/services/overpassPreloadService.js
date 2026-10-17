@@ -12,10 +12,9 @@ let pendingPreload = null;
 let lastNetworkRequestTime = 0;
 
 const overpassEndpoints = [
-    'https://overpass.osm.ch/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass-api.de/api/interpreter',
     'https://lz4.overpass-api.de/api/interpreter',
-    'https://overpass-api.de/api/interpreter'
+    'https://z.overpass-api.de/api/interpreter'
 ];
 
 /**
@@ -152,11 +151,11 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         }
 
         // 2. Direct fallback
-        if (!data || !data.elements) {
+        if (!data || !data.elements || data.elements.length === 0) {
             for (const ep of overpassEndpoints) {
                 try {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
                     const response = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
                         signal: controller.signal
@@ -164,8 +163,11 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
                     clearTimeout(timeoutId);
 
                     if (response.ok) {
-                        data = await response.json();
-                        break;
+                        const parsed = await response.json();
+                        if (parsed && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+                            data = parsed;
+                            break;
+                        }
                     }
                 } catch {
                     // Try next endpoint silently

@@ -47,7 +47,7 @@ if (empty($query)) {
 
 // Simple server-side caching (15 minutes) based on query hash
 $cacheDir = sys_get_temp_dir();
-$cacheFile = $cacheDir . '/nester_overpass_' . md5($query) . '.json';
+$cacheFile = $cacheDir . '/nester_overpass_v2_' . md5($query) . '.json';
 $cacheLifetime = 15 * 60; // 15 minutes
 
 if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheLifetime)) {
@@ -60,10 +60,9 @@ if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheLifetime)
 }
 
 $endpoints = [
-    'https://overpass.osm.ch/api/interpreter',
-    'https://lz4.overpass-api.de/api/interpreter',
     'https://overpass-api.de/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter'
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://z.overpass-api.de/api/interpreter'
 ];
 
 $successResponse = null;
@@ -74,8 +73,8 @@ foreach ($endpoints as $endpoint) {
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, 'data=' . urlencode($query));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_USERAGENT, 'NesterApp/1.2 (https://nester.hamburgerstadttauben.de; info@hamburgerstadttauben.de)');
     curl_setopt($ch, CURLOPT_REFERER, 'https://nester.hamburgerstadttauben.de/');
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -90,9 +89,11 @@ foreach ($endpoints as $endpoint) {
         $decoded = json_decode($result, true);
         if ($decoded !== null && isset($decoded['elements'])) {
             $successResponse = $result;
-            // Write to cache
-            @file_put_contents($cacheFile, $result);
-            break;
+            // Only cache if elements were returned to prevent poisoning cache with empty sets
+            if (!empty($decoded['elements'])) {
+                @file_put_contents($cacheFile, $result);
+                break;
+            }
         }
     }
 }
