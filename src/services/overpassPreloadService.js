@@ -1,11 +1,15 @@
 import { isGridCached, saveCachedPOIs } from './db';
-import { fetchIndoorGeoJson } from './indoorService';
 import { API_BASE_URL } from './nestService';
 
 export const PRELOAD_MIN_ZOOM = 14;
 export const GRID_SIZE = 0.005; // ~500m grid cell size
+const MIN_NETWORK_INTERVAL_MS = 2500; // Fair-use: Minimum cooldown between network requests to Overpass
+const DEBOUNCE_DELAY_MS = 800; // Debounce after user stops moving/zooming map
+
 let preloadTimeout = null;
 let isPreloading = false;
+let pendingPreload = null;
+let lastNetworkRequestTime = 0;
 
 const overpassEndpoints = [
     'https://overpass-api.de/api/interpreter',
@@ -41,17 +45,22 @@ const getGridKeysForBounds = (s, w, n, e) => {
 };
 
 /**
- * Preload POIs and indoor features for the given bounds.
+ * Preload POIs for the given bounds respecting Overpass API rate limits and local cache.
  */
 export const preloadOverpassDataForBounds = async (bounds, zoom) => {
     if (!navigator.onLine) return;
     if (zoom < PRELOAD_MIN_ZOOM) return;
-    if (isPreloading) return;
 
-    // Safety clamp: if bounds are large (wide screen or zoom 14), clamp around center (~3.5km x 3.5km)
+    // If an Overpass request is already active, queue this latest viewport so it isn't dropped
+    if (isPreloading) {
+        pendingPreload = { bounds, zoom };
+        return;
+    }
+
+    // Safety clamp: keep queries compact (~3km x 3km box centered on viewport) to minimize Overpass server load
     const center = bounds.getCenter();
-    const maxHalfLat = 0.02; // ~2.2km
-    const maxHalfLng = 0.035; // ~2.3km
+    const maxHalfLat = 0.015; // ~1.6km
+    const maxHalfLng = 0.025; // ~1.6km
     const s = Math.max(bounds.getSouth(), center.lat - maxHalfLat);
     const n = Math.min(bounds.getNorth(), center.lat + maxHalfLat);
     const w = Math.max(bounds.getWest(), center.lng - maxHalfLng);
@@ -59,7 +68,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
 
     const gridKeys = getGridKeysForBounds(s, w, n, e);
 
-    // Check which grid cells are not cached yet
+    // Check which grid cells are already cached in IndexedDB
     const uncachedGridKeys = [];
     for (const gk of gridKeys) {
         const cached = await isGridCached(gk);
@@ -68,18 +77,35 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
         }
     }
 
+    // 100% of visible area is already in local cache -> no network request needed!
     if (uncachedGridKeys.length === 0) {
-        // Entire area is already cached!
+        return;
+    }
+
+    // Micro-pan protection: if center cell is already cached and <25% of visible cells are uncached, skip
+    const centerKey = getGridKey(center.lat, center.lng);
+    const isCenterCached = await isGridCached(centerKey);
+    if (isCenterCached && (uncachedGridKeys.length / gridKeys.length < 0.25)) {
+        return;
+    }
+
+    // Rate-limiting: enforce minimum delay between successive Overpass API calls
+    const now = Date.now();
+    const elapsed = now - lastNetworkRequestTime;
+    if (elapsed < MIN_NETWORK_INTERVAL_MS) {
+        const remainingDelay = MIN_NETWORK_INTERVAL_MS - elapsed;
+        if (preloadTimeout) clearTimeout(preloadTimeout);
+        preloadTimeout = setTimeout(() => {
+            preloadOverpassDataForBounds(bounds, zoom);
+        }, remainingDelay);
         return;
     }
 
     isPreloading = true;
+    lastNetworkRequestTime = Date.now();
 
     try {
-        // 1. Concurrently prefetch indoor features for this area (parking decks, elevators, corridors)
-        fetchIndoorGeoJson(bounds).catch(() => {});
-
-        // 2. Fetch POIs for automatic nest naming (amenities, shops, tourism, leisure, etc.)
+        // Fetch POIs for automatic nest naming (amenities, shops, tourism, leisure, etc.)
         const query = `
             [out:json][timeout:15];
             (
@@ -104,7 +130,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
 
         let data = null;
 
-        // 1. Try server-side proxy first
+        // 1. Try server-side proxy first (same-origin, handles CORS, file-caches for 15m)
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 12000);
@@ -126,13 +152,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
 
         // 2. Direct fallback
         if (!data || !data.elements) {
-            const fallbackEndpoints = [
-                'https://overpass-api.de/api/interpreter',
-                'https://z.overpass-api.de/api/interpreter',
-                'https://lz4.overpass-api.de/api/interpreter'
-            ];
-
-            for (const ep of fallbackEndpoints) {
+            for (const ep of overpassEndpoints) {
                 try {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -173,13 +193,24 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
                 }
             }
 
-            // Save POIs and mark grid cells as cached
+            // Save POIs and mark grid cells as cached in IndexedDB
             await saveCachedPOIs(pois, uncachedGridKeys);
         }
     } catch (e) {
         console.debug('Background Overpass preload skipped:', e);
     } finally {
         isPreloading = false;
+
+        // If user changed viewport while query was in-flight, process the latest view with cooldown
+        if (pendingPreload) {
+            const next = pendingPreload;
+            pendingPreload = null;
+            const remainingDelay = Math.max(200, MIN_NETWORK_INTERVAL_MS - (Date.now() - lastNetworkRequestTime));
+            if (preloadTimeout) clearTimeout(preloadTimeout);
+            preloadTimeout = setTimeout(() => {
+                preloadOverpassDataForBounds(next.bounds, next.zoom);
+            }, remainingDelay);
+        }
     }
 };
 
@@ -206,8 +237,8 @@ export const scheduleOverpassPreload = (map, immediate = false) => {
     };
 
     if (immediate) {
-        run();
+        preloadTimeout = setTimeout(run, 150);
     } else {
-        preloadTimeout = setTimeout(run, 350);
+        preloadTimeout = setTimeout(run, DEBOUNCE_DELAY_MS);
     }
 };
