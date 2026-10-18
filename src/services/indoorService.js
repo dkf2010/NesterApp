@@ -1,5 +1,6 @@
 import { getDB } from './db';
 import { API_BASE_URL } from './nestService';
+import { isOverpassEnabled } from './settingsService';
 
 /**
  * Convert Overpass 'out geom;' elements into a GeoJSON FeatureCollection.
@@ -87,8 +88,8 @@ export const fetchIndoorGeoJson = async (bounds) => {
         // continue
     }
 
-    // If offline and no cache, return empty
-    if (!navigator.onLine) {
+    // If Overpass is disabled or offline and no cache, return empty
+    if (!isOverpassEnabled() || !navigator.onLine) {
         return { type: 'FeatureCollection', features: [] };
     }
 

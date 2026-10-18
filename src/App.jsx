@@ -13,7 +13,7 @@ import { subscribeSyncStatus } from './services/syncService';
 import { getCachedNests } from './services/db';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import SyncQueueModal from './components/SyncQueueModal';
-import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload, Database } from 'lucide-react';
+import { LogOut, KeyRound, Users, Egg, ScrollText, WifiOff, RefreshCw, CloudUpload, Settings } from 'lucide-react';
 import './App.css';
 
 // We separate the actual app content from the provider wrapper so we can use useAuth hook
@@ -32,7 +32,15 @@ function MainApp() {
   const [showAdminLogs, setShowAdminLogs] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showQueueModal, setShowQueueModal] = useState(false);
+  const [queueModalTab, setQueueModalTab] = useState('settings');
   const [syncStatus, setSyncStatus] = useState({ isSyncing: false, pendingCount: 0, isOnline: navigator.onLine });
+
+  // Helper to refresh data from server
+  const refreshNests = async () => {
+    if (!isAuthenticated) return;
+    const data = await loadNests(token);
+    setNests(data);
+  };
 
   // Subscribe to offline/sync status
   useEffect(() => {
@@ -54,13 +62,6 @@ function MainApp() {
   // Check for reset token in URL
   const urlParams = new URLSearchParams(window.location.search);
   const resetToken = urlParams.get('reset_token');
-
-  // Helper to refresh data from server
-  const refreshNests = async () => {
-    if (!isAuthenticated) return;
-    const data = await loadNests(token);
-    setNests(data);
-  };
 
   useEffect(() => {
     let isMounted = true;
@@ -312,12 +313,15 @@ function MainApp() {
           </button>
           <button
             className="logout-button"
-            onClick={() => setShowQueueModal(true)}
-            aria-label="Cache & Warteschlange"
-            title="Lokaler Speicher & Warteschlange"
+            onClick={() => {
+              setQueueModalTab('settings');
+              setShowQueueModal(true);
+            }}
+            aria-label="Einstellungen & Lokaler Speicher"
+            title="Einstellungen, Speicher & Warteschlange"
             style={{ padding: '0.5rem' }}
           >
-            <Database size={20} />
+            <Settings size={20} />
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, justifyContent: 'center' }}>
@@ -325,7 +329,10 @@ function MainApp() {
           {!syncStatus.isOnline && (
             <button
               className="sync-badge offline"
-              onClick={() => setShowQueueModal(true)}
+              onClick={() => {
+                setQueueModalTab('queue');
+                setShowQueueModal(true);
+              }}
               title="Offline: Warteschlange ansehen"
             >
               <WifiOff size={14} />
@@ -335,7 +342,10 @@ function MainApp() {
           {syncStatus.isOnline && syncStatus.isSyncing && (
             <button
               className="sync-badge syncing"
-              onClick={() => setShowQueueModal(true)}
+              onClick={() => {
+                setQueueModalTab('queue');
+                setShowQueueModal(true);
+              }}
               title="Synchronisiere: Warteschlange ansehen"
             >
               <RefreshCw size={14} className="spin-icon" />
@@ -345,7 +355,10 @@ function MainApp() {
           {syncStatus.isOnline && !syncStatus.isSyncing && syncStatus.pendingCount > 0 && (
             <button
               className="sync-badge pending"
-              onClick={() => setShowQueueModal(true)}
+              onClick={() => {
+                setQueueModalTab('queue');
+                setShowQueueModal(true);
+              }}
               title="Warteschlange ansehen und verwalten"
             >
               <CloudUpload size={14} />
@@ -359,7 +372,10 @@ function MainApp() {
       </header>
 
       {showQueueModal && (
-        <SyncQueueModal onClose={() => setShowQueueModal(false)} />
+        <SyncQueueModal
+          initialTab={queueModalTab}
+          onClose={() => setShowQueueModal(false)}
+        />
       )}
 
       {showChangePassword && (

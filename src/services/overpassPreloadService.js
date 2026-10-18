@@ -1,5 +1,6 @@
 import { isGridCached, saveCachedPOIs } from './db';
 import { API_BASE_URL } from './nestService';
+import { isOverpassEnabled } from './settingsService';
 
 export const PRELOAD_MIN_ZOOM = 14;
 export const GRID_SIZE = 0.005; // ~500m grid cell size
@@ -48,6 +49,7 @@ const getGridKeysForBounds = (s, w, n, e) => {
  * Preload POIs for the given bounds respecting Overpass API rate limits and local cache.
  */
 export const preloadOverpassDataForBounds = async (bounds, zoom) => {
+    if (!isOverpassEnabled()) return;
     if (!navigator.onLine) return;
     if (zoom < PRELOAD_MIN_ZOOM) return;
 
@@ -221,6 +223,7 @@ export const preloadOverpassDataForBounds = async (bounds, zoom) => {
  * Debounced trigger when the map moves or zooms.
  */
 export const scheduleOverpassPreload = (map, immediate = false) => {
+    if (!isOverpassEnabled()) return;
     if (!navigator.onLine) return;
     if (!map) return;
 

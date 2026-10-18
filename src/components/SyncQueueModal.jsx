@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, RefreshCw, Trash2, CloudUpload, AlertCircle, CheckCircle, Database, Map as MapIcon, Compass } from 'lucide-react';
+import { X, RefreshCw, Trash2, CloudUpload, AlertCircle, CheckCircle, Database, Map as MapIcon, Compass, Settings, Info } from 'lucide-react';
 import {
     getQueueJobs,
     removeQueueJob,
@@ -12,15 +12,16 @@ import {
 } from '../services/db';
 import { processSyncQueue, subscribeSyncStatus } from '../services/syncService';
 import { useAuth } from '../contexts/AuthContext';
+import { getSettings, updateSettings, subscribeSettings } from '../services/settingsService';
 
-export default function SyncQueueModal({ onClose }) {
+export default function SyncQueueModal({ onClose, initialTab = 'queue' }) {
     const { token } = useAuth();
-    const [activeTab, setActiveTab] = useState('queue'); // 'queue' | 'cache'
+    const [activeTab, setActiveTab] = useState(initialTab); // 'queue' | 'cache' | 'settings'
+    const [settings, setSettings] = useState(getSettings());
     const [jobs, setJobs] = useState([]);
     const [nestsMap, setNestsMap] = useState({});
     const [isProcessing, setIsProcessing] = useState(false);
     const [stats, setStats] = useState(null);
-    const [statsLoading, setStatsLoading] = useState(false);
 
     const loadJobs = async () => {
         const queueJobs = await getQueueJobs();
@@ -33,27 +34,37 @@ export default function SyncQueueModal({ onClose }) {
     };
 
     const loadStats = async () => {
-        setStatsLoading(true);
         try {
             const s = await getStorageStats();
             setStats(s);
-        } finally {
-            setStatsLoading(false);
+        } catch (e) {
+            console.error('Failed to load storage stats:', e);
         }
+    };
+
+    useEffect(() => {
+        const unsubscribe = subscribeSettings((newSettings) => {
+            setSettings(newSettings);
+        });
+        return unsubscribe;
+    }, []);
+
+    const handleToggleOverpass = () => {
+        const updated = updateSettings({ enableOverpass: !settings.enableOverpass });
+        setSettings(updated);
     };
 
     useEffect(() => {
         let isMounted = true;
 
-        Promise.all([getQueueJobs(), getCachedNests()]).then(([queueJobs, cached]) => {
+        Promise.all([getQueueJobs(), getCachedNests(), getStorageStats()]).then(([queueJobs, cached, storageStats]) => {
             if (!isMounted) return;
             const map = {};
             cached.forEach(n => { map[n.id] = n.name; });
             setJobs(queueJobs);
             setNestsMap(map);
+            setStats(storageStats);
         });
-
-        loadStats();
 
         const unsubscribe = subscribeSyncStatus((status) => {
             if (!isMounted) return;
@@ -193,16 +204,16 @@ export default function SyncQueueModal({ onClose }) {
                         justifyContent: 'space-between'
                     }}
                 >
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                         <button
                             onClick={() => setActiveTab('queue')}
                             style={{
-                                padding: '0.35rem 0.75rem',
+                                padding: '0.35rem 0.65rem',
                                 borderRadius: 'var(--radius-md)',
                                 border: 'none',
                                 cursor: 'pointer',
                                 fontWeight: 600,
-                                fontSize: '0.85rem',
+                                fontSize: '0.82rem',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '0.35rem',
@@ -210,7 +221,7 @@ export default function SyncQueueModal({ onClose }) {
                                 color: activeTab === 'queue' ? '#ffffff' : 'var(--text-muted)'
                             }}
                         >
-                            <CloudUpload size={16} />
+                            <CloudUpload size={15} />
                             Warteschlange ({jobs.length})
                         </button>
                         <button
@@ -219,12 +230,12 @@ export default function SyncQueueModal({ onClose }) {
                                 loadStats();
                             }}
                             style={{
-                                padding: '0.35rem 0.75rem',
+                                padding: '0.35rem 0.65rem',
                                 borderRadius: 'var(--radius-md)',
                                 border: 'none',
                                 cursor: 'pointer',
                                 fontWeight: 600,
-                                fontSize: '0.85rem',
+                                fontSize: '0.82rem',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '0.35rem',
@@ -232,8 +243,27 @@ export default function SyncQueueModal({ onClose }) {
                                 color: activeTab === 'cache' ? '#ffffff' : 'var(--text-muted)'
                             }}
                         >
-                            <Database size={16} />
+                            <Database size={15} />
                             Offline-Cache
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('settings')}
+                            style={{
+                                padding: '0.35rem 0.65rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                fontSize: '0.82rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.35rem',
+                                backgroundColor: activeTab === 'settings' ? 'var(--primary-color)' : 'transparent',
+                                color: activeTab === 'settings' ? '#ffffff' : 'var(--text-muted)'
+                            }}
+                        >
+                            <Settings size={15} />
+                            Settings
                         </button>
                     </div>
 
@@ -466,7 +496,7 @@ export default function SyncQueueModal({ onClose }) {
                                     <div>
                                         <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Overpass & Indoor-Daten</div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            {stats ? `${stats.overpassCount} POIs & Parkdecks` : '...'} • Aktiv ab Zoom 16
+                                            {stats ? `${stats.overpassCount} POIs & Parkdecks` : '...'} • {settings.enableOverpass ? 'Aktiv ab Zoom 16' : 'Abfrage in Settings deaktiviert'}
                                         </div>
                                     </div>
                                 </div>
@@ -549,6 +579,102 @@ export default function SyncQueueModal({ onClose }) {
                                 <Trash2 size={16} />
                                 Gesamten Offline-Cache leeren
                             </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tab 3: Settings Content */}
+                {activeTab === 'settings' && (
+                    <div style={{ padding: '1rem', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                        <div
+                            style={{
+                                backgroundColor: 'var(--surface-color)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)',
+                                padding: '1rem',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.85rem'
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem' }}>
+                                <div style={{ display: 'flex', gap: '0.65rem' }}>
+                                    <Compass size={22} color={settings.enableOverpass ? '#059669' : 'var(--text-muted)'} style={{ flexShrink: 0, marginTop: '2px' }} />
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                            <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-main)' }}>
+                                                Overpass-Abfragen
+                                            </span>
+                                            <span style={{
+                                                fontSize: '0.7rem',
+                                                fontWeight: 600,
+                                                padding: '0.15rem 0.45rem',
+                                                borderRadius: '9999px',
+                                                backgroundColor: settings.enableOverpass ? '#dcfce7' : '#f1f5f9',
+                                                color: settings.enableOverpass ? '#15803d' : '#64748b'
+                                            }}>
+                                                {settings.enableOverpass ? 'Aktiviert' : 'Deaktiviert (Standard)'}
+                                            </span>
+                                        </div>
+                                        <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                                            Automatisches Abrufen von Adressen, Straßennamen und POIs über die OpenStreetMap Overpass-API.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={settings.enableOverpass}
+                                    aria-label="Overpass-Abfragen umschalten"
+                                    onClick={handleToggleOverpass}
+                                    style={{
+                                        position: 'relative',
+                                        width: '46px',
+                                        height: '26px',
+                                        borderRadius: '9999px',
+                                        backgroundColor: settings.enableOverpass ? 'var(--primary-color)' : '#cbd5e1',
+                                        cursor: 'pointer',
+                                        border: 'none',
+                                        outline: 'none',
+                                        flexShrink: 0,
+                                        transition: 'background-color 0.2s ease',
+                                        padding: '2px'
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            display: 'block',
+                                            width: '22px',
+                                            height: '22px',
+                                            borderRadius: '50%',
+                                            backgroundColor: '#ffffff',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                                            transform: settings.enableOverpass ? 'translateX(20px)' : 'translateX(0px)',
+                                            transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                                        }}
+                                    />
+                                </button>
+                            </div>
+
+                            <div style={{
+                                fontSize: '0.75rem',
+                                color: 'var(--text-muted)',
+                                backgroundColor: 'var(--bg-color)',
+                                padding: '0.65rem 0.75rem',
+                                borderRadius: 'var(--radius-md)',
+                                display: 'flex',
+                                gap: '0.5rem',
+                                alignItems: 'flex-start',
+                                lineHeight: '1.35'
+                            }}>
+                                <Info size={16} style={{ flexShrink: 0, marginTop: '1px', color: 'var(--primary-color)' }} />
+                                <span>
+                                    {settings.enableOverpass
+                                        ? 'Overpass-Abfragen sind aktiv. Bei schlechter Mobilfunkverbindung oder Serverausfällen kann es zu Verzögerungen kommen.'
+                                        : 'Standardmäßig deaktiviert, um Datenvolumen zu sparen und externe Server zu entlasten. Nester werden anhand ihrer Koordinaten benannt.'}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 )}

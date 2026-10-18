@@ -8,13 +8,13 @@ import {
     getCachedAmenity,
     setCachedAmenity,
     findNearestCachedAmenity,
-    isGridCached,
     saveCachedPOIs,
     calculateDistanceMeters
 } from './db';
 import { getGridKey } from './overpassPreloadService';
 import { processSyncQueue } from './syncService';
 import { compressImageFile } from '../utils/imageUtils';
+import { isOverpassEnabled } from './settingsService';
 
 // Dynamically resolve the API base URL from the current server's origin.
 export const API_BASE_URL = (() => {
@@ -24,15 +24,6 @@ export const API_BASE_URL = (() => {
     const { protocol, host } = window.location;
     return `${protocol}//${host}/backend/api`;
 })();
-
-// Helper to build headers with token
-const getHeaders = (token) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-    return headers;
-};
 
 // Wrapper around fetch to handle 401 Unauthorized globally and enforce timeout
 export const apiFetch = async (url, options = {}, timeoutMs = 15000) => {
@@ -411,8 +402,8 @@ export const fetchNearestAmenityName = async (lat, lng) => {
         return cachedPOI;
     }
 
-    // 2. If offline, check fallback cache or return clean coordinates fallback immediately
-    if (!navigator.onLine) {
+    // 2. If Overpass is disabled or offline, check fallback cache or return clean coordinates fallback immediately
+    if (!isOverpassEnabled() || !navigator.onLine) {
         const cachedFallback = await getCachedAmenity(gridKey);
         return cachedFallback || `Nest ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
