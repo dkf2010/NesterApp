@@ -31,3 +31,6 @@ dev-dist
 
 # Sync scripts
 sync_www.command
+
+# Backend cache
+backend/cache/

@@ -2,6 +2,9 @@ import { getDB } from './db';
 import { API_BASE_URL } from './nestService';
 import { isOverpassEnabled } from './settingsService';
 
+export const INDOOR_MIN_ZOOM = 16;
+const GRID_SNAP = 0.005; // ~500m fixed grid for reliable cache hits
+
 /**
  * Convert Overpass 'out geom;' elements into a GeoJSON FeatureCollection.
  */
@@ -11,30 +14,43 @@ export const osmGeomToGeoJson = (elements) => {
     for (const el of elements) {
         if (!el.tags) continue;
 
-        const level = el.tags.level || '0';
+        const level = el.tags.level !== undefined ? String(el.tags.level) : '0';
         const properties = {
             id: el.id,
             level: String(level),
             ...el.tags
         };
 
-        if (el.type === 'node' && el.lat && el.lon) {
+        if (el.type === 'node' && typeof el.lat === 'number' && typeof el.lon === 'number') {
+            const lon = Number(el.lon.toFixed(6));
+            const lat = Number(el.lat.toFixed(6));
             features.push({
                 type: 'Feature',
                 properties,
                 geometry: {
                     type: 'Point',
-                    coordinates: [el.lon, el.lat]
-                }
+                    coordinates: [lon, lat]
+                },
+                bbox: [lon, lat, lon, lat]
             });
         } else if (el.type === 'way' && el.geometry && el.geometry.length > 1) {
-            const coords = el.geometry.map(pt => [pt.lon, pt.lat]);
+            const coords = el.geometry.map(pt => [Number(pt.lon.toFixed(6)), Number(pt.lat.toFixed(6))]);
             const isClosed = coords.length > 3 &&
                 coords[0][0] === coords[coords.length - 1][0] &&
                 coords[0][1] === coords[coords.length - 1][1];
 
-            // If closed polygon (room, parking space, corridor)
-            if (isClosed || el.tags.indoor === 'room' || el.tags.indoor === 'area' || el.tags.amenity === 'parking_space') {
+            let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+            for (const [lon, lat] of coords) {
+                if (lon < minLon) minLon = lon;
+                if (lon > maxLon) maxLon = lon;
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+            }
+
+            const isRoom = el.tags.indoor === 'room' || el.tags.indoor === 'area';
+            const isParking = el.tags.amenity === 'parking_space' || !!el.tags.parking;
+
+            if (isClosed || isRoom || isParking) {
                 const ring = isClosed ? coords : [...coords, coords[0]];
                 features.push({
                     type: 'Feature',
@@ -42,7 +58,8 @@ export const osmGeomToGeoJson = (elements) => {
                     geometry: {
                         type: 'Polygon',
                         coordinates: [ring]
-                    }
+                    },
+                    bbox: [minLon, minLat, maxLon, maxLat]
                 });
             } else {
                 features.push({
@@ -51,7 +68,8 @@ export const osmGeomToGeoJson = (elements) => {
                     geometry: {
                         type: 'LineString',
                         coordinates: coords
-                    }
+                    },
+                    bbox: [minLon, minLat, maxLon, maxLat]
                 });
             }
         }
@@ -64,106 +82,188 @@ export const osmGeomToGeoJson = (elements) => {
 };
 
 /**
- * Fetch and cache OSM indoor features for a given bounding box.
+ * Filter features from a full GeoJSON collection by bounding box.
  */
-export const fetchIndoorGeoJson = async (bounds) => {
-    // bounds: { getSouth(), getWest(), getNorth(), getEast() }
+const filterGeoJsonByBounds = (geoJson, s, w, n, e) => {
+    if (!geoJson || !Array.isArray(geoJson.features)) return { type: 'FeatureCollection', features: [] };
+    const pad = 0.0005;
+    const bs = s - pad;
+    const bw = w - pad;
+    const bn = n + pad;
+    const be = e + pad;
+
+    const matched = geoJson.features.filter(f => {
+        if (f.bbox) {
+            const [minLon, minLat, maxLon, maxLat] = f.bbox;
+            return !(minLat > bn || maxLat < bs || minLon > be || maxLon < bw);
+        }
+        if (f.geometry?.type === 'Point') {
+            const [lon, lat] = f.geometry.coordinates;
+            return lat >= bs && lat <= bn && lon >= bw && lon <= be;
+        }
+        return true;
+    });
+
+    return {
+        type: 'FeatureCollection',
+        features: matched
+    };
+};
+
+/**
+ * Fetch and cache OSM indoor features for a given bounding box.
+ * Automatically checks:
+ * 1. Zoom level (minimum zoom 16 required to prevent massive Overpass queries)
+ * 2. Local complete Hamburg offline dataset in IndexedDB
+ * 3. Grid-snapped IndexedDB cache
+ * 4. High-speed backend/api/indoor.php endpoint (~15ms)
+ * 5. Direct multi-mirror Overpass fallback (FR, DE, LZ4, Z)
+ */
+export const fetchIndoorGeoJson = async (bounds, zoom = 16) => {
+    if (zoom < INDOOR_MIN_ZOOM) {
+        return { type: 'FeatureCollection', features: [], zoomTooLow: true };
+    }
+
     const s = bounds.getSouth();
     const w = bounds.getWest();
     const n = bounds.getNorth();
     const e = bounds.getEast();
 
-    const cacheKey = `indoor_${s.toFixed(3)}_${w.toFixed(3)}_${n.toFixed(3)}_${e.toFixed(3)}`;
+    // Snap to grid multiples so panning by a few meters hits the same cache
+    const gridS = Math.floor(s / GRID_SNAP) * GRID_SNAP;
+    const gridW = Math.floor(w / GRID_SNAP) * GRID_SNAP;
+    const gridN = Math.ceil(n / GRID_SNAP) * GRID_SNAP;
+    const gridE = Math.ceil(e / GRID_SNAP) * GRID_SNAP;
 
-    // 1. Check IndexedDB cache (only accept if it contains actual features)
+    const cacheKey = `indoor_${gridS.toFixed(3)}_${gridW.toFixed(3)}_${gridN.toFixed(3)}_${gridE.toFixed(3)}`;
+
+    // 1. Check IndexedDB for complete Hamburg offline dataset
     try {
         const db = await getDB();
         if (db.objectStoreNames.contains('overpass_cache')) {
+            const completeHamburg = await db.get('overpass_cache', 'indoor_hamburg_complete');
+            if (completeHamburg && completeHamburg.geoJson) {
+                const filtered = filterGeoJsonByBounds(completeHamburg.geoJson, s, w, n, e);
+                if (filtered.features.length > 0) {
+                    return filtered;
+                }
+            }
+
+            // 2. Check grid-snapped IndexedDB cache
             const cached = await db.get('overpass_cache', cacheKey);
             if (cached && cached.geoJson && Array.isArray(cached.geoJson.features) && cached.geoJson.features.length > 0) {
                 return cached.geoJson;
             }
         }
     } catch {
-        // continue
+        // proceed
     }
 
-    // If Overpass is disabled or offline and no cache, return empty
-    if (!isOverpassEnabled() || !navigator.onLine) {
+    // If Overpass is explicitly disabled and no cache hit, return empty
+    if (!isOverpassEnabled()) {
         return { type: 'FeatureCollection', features: [] };
     }
 
-    const query = `
-        [out:json][timeout:10];
-        (
-            way["indoor"](${s},${w},${n},${e});
-            way["amenity"="parking_space"](${s},${w},${n},${e});
-            way["parking"](${s},${w},${n},${e});
-            node["indoor"](${s},${w},${n},${e});
-            node["highway"="elevator"](${s},${w},${n},${e});
-            node["highway"="steps"](${s},${w},${n},${e});
-        );
-        out geom;
-    `;
+    // If offline and no cache hit, return empty
+    if (!navigator.onLine) {
+        return { type: 'FeatureCollection', features: [], isOffline: true };
+    }
 
-    let data = null;
+    let geoJson = null;
 
-    // 1. Try server-side proxy first
+    // 3. Try high-performance backend endpoint first (serves pre-cached Hamburg data or server grid cache)
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
+        const timeout = setTimeout(() => controller.abort(), 8000);
 
-        const res = await fetch(`${API_BASE_URL}/overpass.php`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'data=' + encodeURIComponent(query),
+        const res = await fetch(`${API_BASE_URL}/indoor.php?bbox=${s.toFixed(5)},${w.toFixed(5)},${n.toFixed(5)},${e.toFixed(5)}`, {
             signal: controller.signal
         });
         clearTimeout(timeout);
 
         if (res.ok) {
-            data = await res.json();
+            const data = await res.json();
+            if (data && Array.isArray(data.features)) {
+                geoJson = data;
+            }
         }
     } catch {
         // Fallback below
     }
 
-    // 2. Direct mirror fallback (only global instances)
-    if (!data || !data.elements || data.elements.length === 0) {
-        const endpoints = [
-            'https://overpass-api.de/api/interpreter',
-            'https://lz4.overpass-api.de/api/interpreter',
-            'https://z.overpass-api.de/api/interpreter'
-        ];
+    // 4. Fallback: Query via server-side Overpass proxy (overpass.php)
+    if (!geoJson) {
+        const query = `
+            [out:json][timeout:15];
+            (
+                way["indoor"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+                way["amenity"="parking_space"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+                way["parking"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+                node["indoor"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+                node["highway"="elevator"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+                node["highway"="steps"](${gridS.toFixed(4)},${gridW.toFixed(4)},${gridN.toFixed(4)},${gridE.toFixed(4)});
+            );
+            out geom;
+        `;
 
-        for (const ep of endpoints) {
-            try {
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 12000);
 
-                const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
-                    signal: controller.signal
-                });
-                clearTimeout(timeout);
+            const res = await fetch(`${API_BASE_URL}/overpass.php`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'data=' + encodeURIComponent(query),
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
 
-                if (res.ok) {
-                    const parsed = await res.json();
-                    if (parsed && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
-                        data = parsed;
-                        break;
-                    }
+            if (res.ok) {
+                const parsed = await res.json();
+                if (parsed && Array.isArray(parsed.elements)) {
+                    geoJson = osmGeomToGeoJson(parsed.elements);
                 }
-            } catch {
-                // try next endpoint
+            }
+        } catch {
+            // Fallback below
+        }
+
+        // 5. Final fallback: Direct mirror queries (FR, DE, LZ4, Z)
+        if (!geoJson || !geoJson.features || geoJson.features.length === 0) {
+            const endpoints = [
+                'https://overpass.openstreetmap.fr/api/interpreter',
+                'https://overpass-api.de/api/interpreter',
+                'https://lz4.overpass-api.de/api/interpreter',
+                'https://z.overpass-api.de/api/interpreter'
+            ];
+
+            for (const ep of endpoints) {
+                try {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 10000);
+
+                    const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeout);
+
+                    if (res.ok) {
+                        const parsed = await res.json();
+                        if (parsed && Array.isArray(parsed.elements) && parsed.elements.length > 0) {
+                            geoJson = osmGeomToGeoJson(parsed.elements);
+                            break;
+                        }
+                    }
+                } catch {
+                    // try next endpoint
+                }
             }
         }
     }
 
-    if (data && data.elements) {
-        const geoJson = osmGeomToGeoJson(data.elements);
-
-        // Cache in IndexedDB only when we found actual features
-        if (geoJson.features && geoJson.features.length > 0) {
+    if (geoJson && Array.isArray(geoJson.features)) {
+        // Cache in IndexedDB if features were found
+        if (geoJson.features.length > 0) {
             try {
                 const db = await getDB();
                 if (db.objectStoreNames.contains('overpass_cache')) {
@@ -177,9 +277,34 @@ export const fetchIndoorGeoJson = async (bounds) => {
                 // ignore cache write error
             }
         }
-
         return geoJson;
     }
 
     return { type: 'FeatureCollection', features: [] };
+};
+
+/**
+ * Preload and cache complete Hamburg indoor dataset into IndexedDB for offline use.
+ */
+export const preloadHamburgIndoorData = async () => {
+    try {
+        const res = await fetch(`${API_BASE_URL}/indoor.php?action=hamburg`);
+        if (res.ok) {
+            const geoJson = await res.json();
+            if (geoJson && Array.isArray(geoJson.features) && geoJson.features.length > 0) {
+                const db = await getDB();
+                if (db.objectStoreNames.contains('overpass_cache')) {
+                    await db.put('overpass_cache', {
+                        key: 'indoor_hamburg_complete',
+                        geoJson,
+                        timestamp: Date.now()
+                    });
+                }
+                return geoJson;
+            }
+        }
+    } catch (e) {
+        console.warn('Could not preload Hamburg indoor data:', e);
+    }
+    return null;
 };

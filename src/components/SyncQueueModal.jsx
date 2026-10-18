@@ -13,6 +13,7 @@ import {
 import { processSyncQueue, subscribeSyncStatus } from '../services/syncService';
 import { useAuth } from '../contexts/AuthContext';
 import { getSettings, updateSettings, subscribeSettings } from '../services/settingsService';
+import { preloadHamburgIndoorData } from '../services/indoorService';
 
 export default function SyncQueueModal({ onClose, initialTab = 'queue' }) {
     const { token } = useAuth();
@@ -22,6 +23,7 @@ export default function SyncQueueModal({ onClose, initialTab = 'queue' }) {
     const [nestsMap, setNestsMap] = useState({});
     const [isProcessing, setIsProcessing] = useState(false);
     const [stats, setStats] = useState(null);
+    const [preloadingIndoor, setPreloadingIndoor] = useState(false);
 
     const loadJobs = async () => {
         const queueJobs = await getQueueJobs();
@@ -114,6 +116,23 @@ export default function SyncQueueModal({ onClose, initialTab = 'queue' }) {
         if (!window.confirm('Gecachte Adressen, POIs und Indoor-Daten löschen?')) return;
         await clearOverpassCache();
         await loadStats();
+    };
+
+    const handlePreloadHamburgIndoor = async () => {
+        setPreloadingIndoor(true);
+        try {
+            const data = await preloadHamburgIndoorData();
+            if (data && data.features) {
+                alert(`Erfolgreich: ${data.features.length} Indoor-Elemente und Parkdecks für Hamburg wurden lokal gespeichert!`);
+            } else {
+                alert('Indoor-Daten konnten nicht vom Server geladen werden. Bitte Internetverbindung prüfen.');
+            }
+            await loadStats();
+        } catch {
+            alert('Fehler beim Laden der Indoor-Daten.');
+        } finally {
+            setPreloadingIndoor(false);
+        }
     };
 
     const handleClearNests = async () => {
@@ -500,21 +519,40 @@ export default function SyncQueueModal({ onClose, initialTab = 'queue' }) {
                                         </div>
                                     </div>
                                 </div>
-                                <button
-                                    onClick={handleClearOverpass}
-                                    style={{
-                                        padding: '0.35rem 0.65rem',
-                                        borderRadius: 'var(--radius-md)',
-                                        border: '1px solid var(--border-color)',
-                                        backgroundColor: 'var(--bg-color)',
-                                        fontSize: '0.75rem',
-                                        fontWeight: 600,
-                                        cursor: 'pointer',
-                                        color: 'var(--danger-color)'
-                                    }}
-                                >
-                                    Leeren
-                                </button>
+                                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                                    <button
+                                        onClick={handlePreloadHamburgIndoor}
+                                        disabled={preloadingIndoor}
+                                        style={{
+                                            padding: '0.35rem 0.65rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--border-color)',
+                                            backgroundColor: 'var(--bg-color)',
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            color: 'var(--primary-color)'
+                                        }}
+                                        title="Komplettes Hamburger Indoor-Paket (Parkdecks, Tiefgaragen, Ebenen) offline speichern"
+                                    >
+                                        {preloadingIndoor ? 'Lade...' : 'Offline laden'}
+                                    </button>
+                                    <button
+                                        onClick={handleClearOverpass}
+                                        style={{
+                                            padding: '0.35rem 0.65rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--border-color)',
+                                            backgroundColor: 'var(--bg-color)',
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            color: 'var(--danger-color)'
+                                        }}
+                                    >
+                                        Leeren
+                                    </button>
+                                </div>
                             </div>
 
                             {/* 3. Nests Offline Copy */}

@@ -285,6 +285,10 @@ export const getStorageStats = async () => {
         nestsCount = await db.count('nests').catch(() => 0);
         queueCount = await db.count('sync_queue').catch(() => 0);
         overpassCount = await db.count('overpass_cache').catch(() => 0);
+        const completeIndoor = await db.get('overpass_cache', 'indoor_hamburg_complete').catch(() => null);
+        if (completeIndoor && completeIndoor.geoJson?.features) {
+            overpassCount += completeIndoor.geoJson.features.length;
+        }
     } catch {
         // ignore
     }

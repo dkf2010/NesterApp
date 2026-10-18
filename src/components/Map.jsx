@@ -3,7 +3,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { LocateFixed, Layers } from 'lucide-react';
-import { fetchIndoorGeoJson } from '../services/indoorService';
+import { fetchIndoorGeoJson, INDOOR_MIN_ZOOM } from '../services/indoorService';
 import { scheduleOverpassPreload } from '../services/overpassPreloadService';
 
 // Configure Web Worker URL for Vite
@@ -140,6 +140,12 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     const [indoorActive, setIndoorActive] = useState(false);
     const [currentLevel, setCurrentLevel] = useState(0);
     const [indoorLoading, setIndoorLoading] = useState(false);
+    const [currentZoom, setCurrentZoom] = useState(12);
+
+    const indoorActiveRef = useRef(false);
+    const currentLevelRef = useRef(0);
+    const indoorFeaturesRef = useRef(new Map());
+    const indoorReloadTimeoutRef = useRef(null);
 
     const onMapClickRef = useRef(onMapClick);
     const onNestSelectRef = useRef(onNestSelect);
@@ -162,6 +168,39 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         const list = currentList || nestsRef.current || [];
         const visible = list.filter(nest => bounds.contains([nest.lng, nest.lat]));
         onVisibleNestsChangeRef.current(visible);
+    };
+
+    // Debounced automatic reload of indoor features when panning/zooming
+    const scheduleIndoorReload = (map) => {
+        if (indoorReloadTimeoutRef.current) clearTimeout(indoorReloadTimeoutRef.current);
+        indoorReloadTimeoutRef.current = setTimeout(async () => {
+            if (!map || !indoorActiveRef.current) return;
+            const zoom = map.getZoom();
+            if (zoom < INDOOR_MIN_ZOOM) return;
+
+            setIndoorLoading(true);
+            try {
+                const geoJson = await fetchIndoorGeoJson(map.getBounds(), zoom);
+                if (geoJson && Array.isArray(geoJson.features)) {
+                    let added = false;
+                    for (const f of geoJson.features) {
+                        const id = f.properties?.id || JSON.stringify(f.geometry);
+                        if (!indoorFeaturesRef.current.has(id)) {
+                            indoorFeaturesRef.current.set(id, f);
+                            added = true;
+                        }
+                    }
+                    if (added && map.getSource('indoor-source')) {
+                        map.getSource('indoor-source').setData({
+                            type: 'FeatureCollection',
+                            features: Array.from(indoorFeaturesRef.current.values())
+                        });
+                    }
+                }
+            } finally {
+                setIndoorLoading(false);
+            }
+        }, 500);
     };
 
     // 1. Initialize MapLibre GL
@@ -199,6 +238,11 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         const handleBoundsChange = () => {
             updateVisibleNests();
             scheduleOverpassPreload(map);
+            const zoom = map.getZoom();
+            setCurrentZoom(zoom);
+            if (indoorActiveRef.current) {
+                scheduleIndoorReload(map);
+            }
         };
         map.on('moveend', handleBoundsChange);
         map.on('zoomend', handleBoundsChange);
@@ -207,6 +251,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             updateVisibleNests();
             scheduleOverpassPreload(map, true);
             setupIndoorLayers(map);
+            setCurrentZoom(map.getZoom());
 
             const layers = map.getStyle().layers || [];
             const labelLayerId = layers.find(
@@ -246,6 +291,9 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
         const markers = markersRef.current;
 
         return () => {
+            if (indoorReloadTimeoutRef.current) {
+                clearTimeout(indoorReloadTimeoutRef.current);
+            }
             markers.forEach(marker => marker.remove());
             markers.clear();
             if (userMarkerRef.current) {
@@ -360,6 +408,7 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     // 4. Update Indoor Level & Filter
     const handleLevelSelect = (level) => {
         setCurrentLevel(level);
+        currentLevelRef.current = level;
         const map = mapRef.current;
         if (!map || !map.isStyleLoaded()) return;
 
@@ -374,24 +423,41 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
     const toggleIndoor = async () => {
         const nextState = !indoorActive;
         setIndoorActive(nextState);
+        indoorActiveRef.current = nextState;
 
         const map = mapRef.current;
         if (!map) return;
 
         if (nextState) {
             setupIndoorLayers(map);
+            const zoom = map.getZoom();
+            if (zoom < INDOOR_MIN_ZOOM) {
+                map.easeTo({ zoom: INDOOR_MIN_ZOOM, duration: 600 });
+            }
             setIndoorLoading(true);
             try {
-                const geoJson = await fetchIndoorGeoJson(map.getBounds());
-                if (map.getSource('indoor-source')) {
-                    map.getSource('indoor-source').setData(geoJson);
+                const effectiveZoom = Math.max(zoom, INDOOR_MIN_ZOOM);
+                const geoJson = await fetchIndoorGeoJson(map.getBounds(), effectiveZoom);
+                if (geoJson && Array.isArray(geoJson.features)) {
+                    indoorFeaturesRef.current.clear();
+                    for (const f of geoJson.features) {
+                        const id = f.properties?.id || JSON.stringify(f.geometry);
+                        indoorFeaturesRef.current.set(id, f);
+                    }
+                    if (map.getSource('indoor-source')) {
+                        map.getSource('indoor-source').setData({
+                            type: 'FeatureCollection',
+                            features: Array.from(indoorFeaturesRef.current.values())
+                        });
+                    }
                 }
-                handleLevelSelect(currentLevel);
+                handleLevelSelect(currentLevelRef.current);
             } finally {
                 setIndoorLoading(false);
             }
         } else {
             // Clear indoor features
+            indoorFeaturesRef.current.clear();
             if (map.getSource('indoor-source')) {
                 map.getSource('indoor-source').setData({ type: 'FeatureCollection', features: [] });
             }
@@ -552,6 +618,21 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
                         {indoorLoading && (
                             <div style={{ fontSize: '9px', textAlign: 'center', padding: '2px', color: 'var(--text-muted)' }}>
                                 ...
+                            </div>
+                        )}
+                        {currentZoom < INDOOR_MIN_ZOOM && (
+                            <div
+                                style={{
+                                    fontSize: '9px',
+                                    textAlign: 'center',
+                                    padding: '3px 2px',
+                                    color: '#d97706',
+                                    backgroundColor: '#fef3c7',
+                                    lineHeight: '1.1'
+                                }}
+                                title="Indoor-Ebenen werden ab Zoom 16 angezeigt. Bitte näher heranzoomen."
+                            >
+                                Zoom &ge;16
                             </div>
                         )}
                     </div>
