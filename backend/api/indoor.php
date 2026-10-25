@@ -25,6 +25,8 @@ if (!in_array('ob_gzhandler', ob_list_handlers()) && extension_loaded('zlib') &&
     @ob_start('ob_gzhandler');
 }
 
+require_once dirname(__DIR__) . '/config.php';
+
 $hamburgDataFile = __DIR__ . '/../data/indoor_hamburg.geojson';
 $cacheDir = __DIR__ . '/../cache/indoor';
 if (!is_dir($cacheDir)) {
@@ -152,7 +154,8 @@ $cliArg = ($isCli && isset($argv[1])) ? $argv[1] : '';
 $action = $_GET['action'] ?? ($cliArg ?: '');
 
 if (($isCli && in_array($cliArg, ['--seed-hamburg', '--refresh', 'seed', 'refresh'])) || $action === 'refresh_hamburg') {
-    if (!$isCli && (empty($_GET['token']) || $_GET['token'] !== 'nester_secret_indoor_seed')) {
+    $expectedToken = get_config('INDOOR_REFRESH_TOKEN', 'nester_secret_indoor_seed');
+    if (!$isCli && (empty($_GET['token']) || empty($expectedToken) || !hash_equals((string)$expectedToken, (string)$_GET['token']))) {
         // Simple security check for web refresh
         http_response_code(403);
         echo json_encode(['error' => 'Unauthorized']);
