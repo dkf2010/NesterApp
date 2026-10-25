@@ -49,11 +49,6 @@ jobs:
           username: ${{ secrets.DEMO_USERNAME }}
           key: ${{ secrets.DEMO_SSH_KEY }}
           script: |
-            echo "=== User & Environment ==="
-            whoami
-            id
-            pwd
-
             echo "=== Ensuring Correct Permissions ==="
             find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \; 2>/dev/null || true
             find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \; 2>/dev/null || true
@@ -98,8 +93,7 @@ jobs:
             if curl -sSf https://nester-demo.philip.ps/backend/deploy_reset.php; then
                 HTTP_SUCCESS=true
             else
-                echo "HTTP request returned error. Detailed response:"
-                curl -iv https://nester-demo.philip.ps/backend/deploy_reset.php 2>&1 || true
+                echo "HTTP request returned error. Falling back to CLI execution."
             fi
 
             if [ "$HTTP_SUCCESS" = "false" ]; then
@@ -111,29 +105,6 @@ jobs:
                 else
                     echo "CLI execution failed."
                 fi
-
-                echo "=== Inspecting Server Logs for Diagnosing 403 ==="
-                for logpath in \
-                    "/home/philippsnesterdemo/log/error.log" \
-                    "/home/philippsnesterdemo/web/nester-demo/../log/error.log" \
-                    "/var/log/apache2/error.log" \
-                    "/var/log/apache2/suexec.log" \
-                    "/home/philippsnesterdemo/log/suexec.log"; do
-                    if [ -f "$logpath" ]; then
-                        echo "--- Last lines of $logpath ---"
-                        tail -n 25 "$logpath" 2>/dev/null || true
-                    fi
-                done
-
-                echo "=== Inspecting Apache vhost & htaccess configuration ==="
-                cat /home/philippsnesterdemo/web/nester-demo/.htaccess 2>/dev/null || true
-                find /home/philippsnesterdemo/web/nester-demo/ -name ".htaccess" -exec cat {} + 2>/dev/null || true
-                grep -iE "filesmatch|require|handler|php" /etc/apache2/sites-available/*nester* 2>/dev/null || true
-                echo "=== Inspecting web21 directories and PHP processes ==="
-                ls -la /var/www/clients/client1/web21/ 2>/dev/null || true
-                ls -la /var/www/clients/client1/web21/web/ 2>/dev/null || true
-                ls -la /var/www/php-fcgi-scripts/web21/ 2>/dev/null || true
-                ps aux | grep -iE "php|fpm" 2>/dev/null || true
 
                 if [ "$CLI_SUCCESS" = "false" ]; then
                     rm -f deploy_reset.php
