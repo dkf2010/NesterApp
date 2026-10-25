@@ -15,6 +15,7 @@ if (isset($_SERVER['HTTP_ORIGIN']) && strpos($_SERVER['HTTP_ORIGIN'], 'localhost
 }
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header("Access-Control-Expose-Headers: ETag, Content-Length, X-Source, X-Indoor-Version");
 
 if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
@@ -184,12 +185,47 @@ if (($isCli && in_array($cliArg, ['--seed-hamburg', '--refresh', 'seed', 'refres
 }
 
 // -----------------------------------------------------------------------------
+// Serve Version / Metadata of Hamburg Indoor Dataset
+// -----------------------------------------------------------------------------
+if ($action === 'version') {
+    header('Content-Type: application/json');
+    if (file_exists($hamburgDataFile)) {
+        $mtime = filemtime($hamburgDataFile);
+        $etag = md5_file($hamburgDataFile);
+        $generatedAt = null;
+
+        $fp = @fopen($hamburgDataFile, 'r');
+        if ($fp) {
+            @fseek($fp, -2048, SEEK_END);
+            $tail = @fread($fp, 2048);
+            @fclose($fp);
+            if (preg_match('/"generated_at"\s*:\s*"([^"]+)"/', $tail, $matches)) {
+                $generatedAt = $matches[1];
+            }
+        }
+
+        echo json_encode([
+            'version' => $generatedAt ?: $etag,
+            'generated_at' => $generatedAt,
+            'etag' => $etag,
+            'mtime' => $mtime
+        ]);
+        exit;
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'Indoor data file not found']);
+        exit;
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Serve Whole Hamburg Dataset (for pre-caching in PWA / offline mode)
 // -----------------------------------------------------------------------------
 if ($action === 'hamburg') {
     if (file_exists($hamburgDataFile)) {
         $etag = '"' . md5_file($hamburgDataFile) . '"';
         header('ETag: ' . $etag);
+        header('X-Indoor-Version: ' . trim($etag, '"'));
         header('Cache-Control: public, max-age=604800'); // 7 days
 
         if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH']) === $etag) {

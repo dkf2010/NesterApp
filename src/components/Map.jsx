@@ -3,7 +3,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreglWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { LocateFixed, Layers } from 'lucide-react';
-import { fetchIndoorGeoJson, INDOOR_MIN_ZOOM } from '../services/indoorService';
+import { fetchIndoorGeoJson, INDOOR_MIN_ZOOM, ensureHamburgIndoorDataLoaded } from '../services/indoorService';
 import { scheduleOverpassPreload } from '../services/overpassPreloadService';
 
 // Configure Web Worker URL for Vite
@@ -436,6 +436,10 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
             }
             setIndoorLoading(true);
             try {
+                // Ensure Hamburg indoor offline data is loaded and up to date with server
+                await ensureHamburgIndoorDataLoaded();
+                if (!indoorActiveRef.current) return;
+
                 const effectiveZoom = Math.max(zoom, INDOOR_MIN_ZOOM);
                 const geoJson = await fetchIndoorGeoJson(map.getBounds(), effectiveZoom);
                 if (geoJson && Array.isArray(geoJson.features)) {
@@ -452,6 +456,8 @@ export default function MapView({ nests = [], onNestSelect, onMapClick, onVisibl
                     }
                 }
                 handleLevelSelect(currentLevelRef.current);
+            } catch (err) {
+                console.error('Error loading indoor features:', err);
             } finally {
                 setIndoorLoading(false);
             }

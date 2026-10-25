@@ -283,6 +283,150 @@ export const fetchIndoorGeoJson = async (bounds, zoom = 16) => {
     return { type: 'FeatureCollection', features: [] };
 };
 
+let lastVersionCheck = 0;
+let lastServerVersion = null;
+
+/**
+ * Fetch indoor data version info from backend.
+ * @param {boolean} force - Force network check even if recently checked
+ * @returns {Promise<{ version: string, generated_at?: string, etag?: string, mtime?: number } | null>}
+ */
+export const fetchServerIndoorVersion = async (force = false) => {
+    if (!navigator.onLine) return null;
+
+    const now = Date.now();
+    // Cache version check result for 60 seconds unless forced
+    if (!force && lastServerVersion && now - lastVersionCheck < 60000) {
+        return lastServerVersion;
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${API_BASE_URL}/indoor.php?action=version`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (res.ok) {
+            const data = await res.json();
+            if (data && (data.version || data.etag || data.generated_at)) {
+                lastVersionCheck = now;
+                lastServerVersion = data;
+                return data;
+            }
+        }
+    } catch (e) {
+        console.debug('Failed to check server indoor version:', e);
+    }
+    return null;
+};
+
+/**
+ * Retrieve cached complete Hamburg indoor dataset and its metadata from IndexedDB.
+ */
+export const getLocalIndoorData = async () => {
+    try {
+        const db = await getDB();
+        if (db.objectStoreNames.contains('overpass_cache')) {
+            const entry = await db.get('overpass_cache', 'indoor_hamburg_complete');
+            if (entry && entry.geoJson && Array.isArray(entry.geoJson.features) && entry.geoJson.features.length > 0) {
+                const generatedAt = entry.generatedAt || entry.geoJson.generated_at || null;
+                const version = entry.version || generatedAt || entry.etag || null;
+                return {
+                    loaded: true,
+                    version,
+                    generatedAt,
+                    etag: entry.etag || null,
+                    timestamp: entry.timestamp || null,
+                    featureCount: entry.geoJson.features.length,
+                    geoJson: entry.geoJson
+                };
+            }
+        }
+    } catch (e) {
+        console.warn('Error reading local indoor data:', e);
+    }
+    return {
+        loaded: false,
+        version: null,
+        generatedAt: null,
+        etag: null,
+        timestamp: null,
+        featureCount: 0,
+        geoJson: null
+    };
+};
+
+/**
+ * Check if the indoor offline data is missing or outdated compared to the server.
+ * Returns { needsUpdate: boolean, reason: string, local: object, server: object | null }
+ */
+export const checkIndoorDataStatus = async (force = false) => {
+    const local = await getLocalIndoorData();
+
+    // 1. Not loaded yet
+    if (!local.loaded) {
+        return {
+            needsUpdate: true,
+            reason: 'missing',
+            local,
+            server: null
+        };
+    }
+
+    // 2. Offline -> cannot check server, keep using local data
+    if (!navigator.onLine) {
+        return {
+            needsUpdate: false,
+            reason: 'offline_using_cached',
+            local,
+            server: null
+        };
+    }
+
+    // 3. Check server version
+    const server = await fetchServerIndoorVersion(force);
+    if (!server) {
+        // Server unreachable or timed out -> keep using local data
+        return {
+            needsUpdate: false,
+            reason: 'server_unreachable_using_cached',
+            local,
+            server: null
+        };
+    }
+
+    // 4. Compare version
+    let isOutdated = false;
+    if (server.generated_at && local.generatedAt) {
+        isOutdated = server.generated_at !== local.generatedAt;
+    } else if (server.etag && local.etag) {
+        isOutdated = server.etag !== local.etag;
+    } else if (server.version && local.version) {
+        isOutdated = server.version !== local.version;
+    } else if (server.version && !local.version) {
+        // Local has no version metadata at all
+        isOutdated = true;
+    }
+
+    if (isOutdated) {
+        return {
+            needsUpdate: true,
+            reason: 'outdated',
+            local,
+            server
+        };
+    }
+
+    return {
+        needsUpdate: false,
+        reason: 'up_to_date',
+        local,
+        server
+    };
+};
+
 /**
  * Preload and cache complete Hamburg indoor dataset into IndexedDB for offline use.
  */
@@ -292,14 +436,31 @@ export const preloadHamburgIndoorData = async () => {
         if (res.ok) {
             const geoJson = await res.json();
             if (geoJson && Array.isArray(geoJson.features) && geoJson.features.length > 0) {
+                const rawEtag = res.headers.get('ETag') || res.headers.get('X-Indoor-Version');
+                const etag = rawEtag ? rawEtag.replace(/^"|"$/g, '') : null;
+                const generatedAt = geoJson.generated_at || null;
+                const version = generatedAt || etag || String(Date.now());
+
                 const db = await getDB();
                 if (db.objectStoreNames.contains('overpass_cache')) {
                     await db.put('overpass_cache', {
                         key: 'indoor_hamburg_complete',
                         geoJson,
+                        version,
+                        generatedAt,
+                        etag,
                         timestamp: Date.now()
                     });
                 }
+
+                // Update server version cache
+                lastServerVersion = {
+                    version,
+                    generated_at: generatedAt,
+                    etag
+                };
+                lastVersionCheck = Date.now();
+
                 return geoJson;
             }
         }
@@ -307,4 +468,61 @@ export const preloadHamburgIndoorData = async () => {
         console.warn('Could not preload Hamburg indoor data:', e);
     }
     return null;
+};
+
+/**
+ * Ensures offline indoor data is loaded and up-to-date.
+ * If data is missing or outdated compared to the server version,
+ * automatically downloads and caches the latest dataset into IndexedDB.
+ */
+export const ensureHamburgIndoorDataLoaded = async ({ onProgress, force = false } = {}) => {
+    const status = await checkIndoorDataStatus(force);
+
+    if (!status.needsUpdate) {
+        return {
+            success: true,
+            updated: false,
+            reason: status.reason,
+            geoJson: status.local?.geoJson || null
+        };
+    }
+
+    // Missing and offline -> cannot download
+    if (!navigator.onLine && status.reason === 'missing') {
+        return {
+            success: false,
+            updated: false,
+            reason: 'offline_and_missing',
+            geoJson: null
+        };
+    }
+
+    if (onProgress) onProgress({ status: 'loading', reason: status.reason });
+
+    const downloaded = await preloadHamburgIndoorData();
+    if (downloaded) {
+        return {
+            success: true,
+            updated: true,
+            reason: status.reason,
+            geoJson: downloaded
+        };
+    }
+
+    // If download failed but we have local data, use local
+    if (status.local?.geoJson) {
+        return {
+            success: true,
+            updated: false,
+            reason: 'download_failed_fallback_local',
+            geoJson: status.local.geoJson
+        };
+    }
+
+    return {
+        success: false,
+        updated: false,
+        reason: 'download_failed',
+        geoJson: null
+    };
 };
