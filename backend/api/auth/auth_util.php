@@ -6,16 +6,25 @@ require_once dirname(__DIR__) . '/app_logger.php';
 // Helper function to check if the provided token in the Authorization header is valid
 function require_auth($pdo)
 {
-    if (!isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $authHeader = null;
+    if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
+        $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
+    } elseif (!empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+    } elseif (function_exists('apache_request_headers')) {
+        $headers = apache_request_headers();
+        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
+    }
+
+    if (!$authHeader) {
         http_response_code(401);
         echo json_encode(['error' => 'Missing Authorization header']);
         exit;
     }
 
-    $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
     // Expected format: "Bearer <token>"
-    $parts = explode(' ', $authHeader);
-    if (count($parts) !== 2 || $parts[0] !== 'Bearer') {
+    $parts = explode(' ', trim($authHeader));
+    if (count($parts) !== 2 || strcasecmp($parts[0], 'Bearer') !== 0) {
         http_response_code(401);
         echo json_encode(['error' => 'Invalid Authorization header format']);
         exit;

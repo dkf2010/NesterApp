@@ -2,3 +2,12 @@
     Order allow,deny
     Deny from all
 </Files>
+
+# Ensure Authorization header is passed to PHP in PHP-FPM / FastCGI environments
+SetEnvIfNoCase ^Authorization$ "(.+)" HTTP_AUTHORIZATION=$1
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
