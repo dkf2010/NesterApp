@@ -28,7 +28,11 @@ if (!in_array('ob_gzhandler', ob_list_handlers()) && extension_loaded('zlib') &&
 
 require_once dirname(__DIR__) . '/config.php';
 
-$hamburgDataFile = __DIR__ . '/../data/indoor_hamburg.geojson';
+$hamburgDataDir = dirname(__DIR__) . '/data';
+if (!is_dir($hamburgDataDir)) {
+    @mkdir($hamburgDataDir, 0755, true);
+}
+$hamburgDataFile = $hamburgDataDir . '/indoor_hamburg.geojson';
 $cacheDir = __DIR__ . '/../cache/indoor';
 if (!is_dir($cacheDir)) {
     @mkdir($cacheDir, 0755, true);

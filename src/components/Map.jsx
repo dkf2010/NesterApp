@@ -113,6 +113,7 @@ const setupIndoorLayers = (map) => {
                     ['get', 'name'],
                     ['case', ['==', ['get', 'highway'], 'elevator'], 'Aufzug', '']
                 ],
+                'text-font': ['noto_sans_regular'],
                 'text-size': 11,
                 'text-anchor': 'center'
             },

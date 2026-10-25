@@ -2,10 +2,33 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Plugin to remove dangling sourceMappingURL comments from vendor assets (e.g. maplibre-gl-worker)
+// that cause 404 warnings in browser Developer Resources
+function removeSourceMappingURLPlugin() {
+  return {
+    name: 'remove-sourcemap-url',
+    apply: 'build',
+    generateBundle(_, bundle) {
+      for (const asset of Object.values(bundle)) {
+        if (asset.type === 'asset' && typeof asset.source === 'string') {
+          asset.source = asset.source.replace(/\/\/# sourceMappingURL=.*$/gm, '');
+        } else if (asset.type === 'asset' && asset.source instanceof Uint8Array) {
+          const text = new TextDecoder().decode(asset.source);
+          if (text.includes('sourceMappingURL=')) {
+            const cleaned = text.replace(/\/\/# sourceMappingURL=.*$/gm, '');
+            asset.source = new TextEncoder().encode(cleaned);
+          }
+        }
+      }
+    }
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    removeSourceMappingURLPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       devOptions: {
