@@ -129,6 +129,11 @@ jobs:
                 cat /home/philippsnesterdemo/web/nester-demo/.htaccess 2>/dev/null || true
                 find /home/philippsnesterdemo/web/nester-demo/ -name ".htaccess" -exec cat {} + 2>/dev/null || true
                 grep -iE "filesmatch|require|handler|php" /etc/apache2/sites-available/*nester* 2>/dev/null || true
+                echo "=== Inspecting web21 directories and PHP processes ==="
+                ls -la /var/www/clients/client1/web21/ 2>/dev/null || true
+                ls -la /var/www/clients/client1/web21/web/ 2>/dev/null || true
+                ls -la /var/www/php-fcgi-scripts/web21/ 2>/dev/null || true
+                ps aux | grep -iE "php|fpm" 2>/dev/null || true
 
                 if [ "$CLI_SUCCESS" = "false" ]; then
                     rm -f deploy_reset.php
