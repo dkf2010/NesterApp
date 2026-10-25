@@ -49,11 +49,19 @@ jobs:
           username: ${{ secrets.DEMO_USERNAME }}
           key: ${{ secrets.DEMO_SSH_KEY }}
           script: |
+            echo "=== User & Environment ==="
+            whoami
+            id
+            pwd
+
+            echo "=== Ensuring Correct Permissions ==="
+            find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \; 2>/dev/null || true
+            find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \; 2>/dev/null || true
+
             cd /home/philippsnesterdemo/web/nester-demo/backend
             
             # Since you wanted the database redeployed on every deployment, 
             # we run a PHP script to clean it, apply schema, and create users.
-            # We do this via HTTP to avoid CLI missing extensions like PDO.
             cat << 'EOF' > deploy_reset.php
             <?php
             require 'api/db.php';
@@ -84,14 +92,44 @@ jobs:
                 exit(1);
             }
             EOF
-            
-            # Execute via web request to ensure correct PHP extensions are loaded
-            curl -sSf https://nester-demo.philip.ps/backend/deploy_reset.php || { echo "Curl failed"; rm -f deploy_reset.php; exit 1; }
+
+            echo "=== Attempting HTTP trigger ==="
+            HTTP_SUCCESS=false
+            if curl -sSf https://nester-demo.philip.ps/backend/deploy_reset.php; then
+                HTTP_SUCCESS=true
+            else
+                echo "HTTP request returned error. Detailed response:"
+                curl -iv https://nester-demo.philip.ps/backend/deploy_reset.php 2>&1 || true
+            fi
+
+            if [ "$HTTP_SUCCESS" = "false" ]; then
+                echo "=== Attempting CLI fallback ==="
+                CLI_SUCCESS=false
+                if php deploy_reset.php; then
+                    echo "CLI execution succeeded!"
+                    CLI_SUCCESS=true
+                else
+                    echo "CLI execution failed."
+                fi
+
+                echo "=== Inspecting Server Logs for Diagnosing 403 ==="
+                for logpath in \
+                    "/home/philippsnesterdemo/log/error.log" \
+                    "/home/philippsnesterdemo/web/nester-demo/../log/error.log" \
+                    "/var/log/apache2/error.log" \
+                    "/var/log/apache2/suexec.log" \
+                    "/home/philippsnesterdemo/log/suexec.log"; do
+                    if [ -f "$logpath" ]; then
+                        echo "--- Last lines of $logpath ---"
+                        tail -n 25 "$logpath" 2>/dev/null || true
+                    fi
+                done
+
+                if [ "$CLI_SUCCESS" = "false" ]; then
+                    rm -f deploy_reset.php
+                    exit 1
+                fi
+            fi
             
             # Clean up
             rm -f deploy_reset.php
-            
-            # Fix permissions for the webserver (assuming the usual www-data or client user)
-            # chown -R web21:client1 /home/philippsnesterdemo/web/nester-demo/ || true
-            # find /home/philippsnesterdemo/web/nester-demo/ -type d -exec chmod 755 {} \;
-            # find /home/philippsnesterdemo/web/nester-demo/ -type f -exec chmod 644 {} \;
